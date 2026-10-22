@@ -152,9 +152,6 @@ namespace sl
         }
 
         display_shutdown();
-#ifdef _WIN32
-        SDL_SetMainReady();
-#endif
 
         if (use_desktop_resolution)
         {
