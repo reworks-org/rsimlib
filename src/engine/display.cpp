@@ -139,8 +139,7 @@ namespace sl
         return "Unknown";
     }
 
-    bool set_gfx_mode(int driver,
-                      int requestedWidth, int requestedHeight, int virtualWidth, int virtualHeight, SDL_WindowFlags windowflags)
+    bool set_gfx_mode(const char* title, int driver, int requestedWidth, int requestedHeight, int virtualWidth, int virtualHeight, SDL_WindowFlags windowflags)
     {
         const bool use_desktop_resolution =
             driver == GFX_AUTODETECT_FULLSCREEN && requestedWidth == 0 && requestedHeight == 0;
@@ -179,7 +178,7 @@ namespace sl
         if (driver == GFX_AUTODETECT_FULLSCREEN)
             windowflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         window = SDL_CreateWindow(
-            "simlib",
+            title,
             SDL_WINDOWPOS_CENTERED,
             SDL_WINDOWPOS_CENTERED,
             requestedWidth,
