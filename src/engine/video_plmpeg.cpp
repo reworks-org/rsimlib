@@ -68,8 +68,6 @@ namespace sl
 
             video->audio_ready = true;
 
-            SDL_InitSubSystem(SDL_INIT_AUDIO);
-
             SDL_AudioSpec want{};
             want.freq = plm_get_samplerate(video->plm);
             want.format = AUDIO_F32SYS;

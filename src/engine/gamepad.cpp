@@ -192,8 +192,6 @@ namespace sl
     {
         if (subsystem_initialised)
             return true;
-        if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) != 0)
-            return false;
         subsystem_initialised = true;
         for (int index = 0; index < SDL_NumJoysticks(); ++index)
             open_device(index);

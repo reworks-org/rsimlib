@@ -140,8 +140,7 @@ namespace sl
     }
 
     bool set_gfx_mode(int driver,
-                      int requestedWidth, int requestedHeight,
-                      int virtualWidth, int virtualHeight)
+                      int requestedWidth, int requestedHeight, int virtualWidth, int virtualHeight, SDL_WindowFlags windowflags)
     {
         const bool use_desktop_resolution =
             driver == GFX_AUTODETECT_FULLSCREEN && requestedWidth == 0 && requestedHeight == 0;
@@ -156,11 +155,6 @@ namespace sl
 #ifdef _WIN32
         SDL_SetMainReady();
 #endif
-        if (SDL_Init(SDL_INIT_VIDEO) != 0)
-        {
-            sl::detail::set_error(SDL_GetError());
-            return false;
-        }
 
         if (use_desktop_resolution)
         {
@@ -168,32 +162,23 @@ namespace sl
             if (SDL_GetDesktopDisplayMode(0, &desktop_mode) != 0)
             {
                 sl::detail::set_error(SDL_GetError());
-                SDL_Quit();
+                
                 return false;
             }
             requestedWidth = desktop_mode.w;
             requestedHeight = desktop_mode.h;
         }
 
-        if (TTF_Init() != 0)
-        {
-            sl::detail::set_error(TTF_GetError());
-            SDL_Quit();
-            return false;
-        }
         ttfInitialized = true;
 
         renderer = detail::create_renderer(selected_backend);
         if (!renderer)
         {
             sl::detail::set_error("Requested graphics backend is not implemented");
-            TTF_Quit();
             ttfInitialized = false;
-            SDL_Quit();
             return false;
         }
-        renderer->configure_window();
-        uint32_t windowflags = renderer->window_flags();
+        
         if (driver == GFX_AUTODETECT_FULLSCREEN)
             windowflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         window = SDL_CreateWindow(
@@ -206,9 +191,9 @@ namespace sl
         if (!window)
         {
             sl::detail::set_error(SDL_GetError());
-            TTF_Quit();
+            
             ttfInitialized = false;
-            SDL_Quit();
+            
             return false;
         }
 
@@ -220,9 +205,7 @@ namespace sl
             renderer.reset();
             SDL_DestroyWindow(window);
             window = nullptr;
-            TTF_Quit();
             ttfInitialized = false;
-            SDL_Quit();
             return false;
         }
 
@@ -237,9 +220,7 @@ namespace sl
             renderer.reset();
             SDL_DestroyWindow(window);
             window = nullptr;
-            TTF_Quit();
             ttfInitialized = false;
-            SDL_Quit();
             return false;
         }
         detail::initialise_screen(logicalWidth > 0 ? logicalWidth : width, logicalHeight > 0 ? logicalHeight : height);
@@ -471,7 +452,7 @@ namespace sl
         if (ttfInitialized)
         {
 
-            TTF_Quit();
+            
             ttfInitialized = false;
         }
         width = 0;
@@ -480,7 +461,7 @@ namespace sl
         logicalHeight = 0;
         renderTargetWidth = 0;
         renderTargetHeight = 0;
-        SDL_Quit();
+        
     }
 
     SDL_Window *get_window()
