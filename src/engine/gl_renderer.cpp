@@ -7,7 +7,7 @@
 #include "shader_paths.h"
 
 #ifdef _WIN32
-#include <GL/glew.h>
+#include <glad/glad.h>
 #else
 #define GL_GLEXT_PROTOTYPES
 #include <SDL2/SDL_opengl.h>

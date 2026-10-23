@@ -4,7 +4,7 @@
 #include "gl_context.h"
 
 #ifdef _WIN32
-#include <GL/glew.h>
+#include <glad/glad.h>
 #else
 #include <SDL2/SDL_opengl.h>
 #endif
@@ -38,23 +38,7 @@ namespace sl::detail
             return false;
         }
 #ifdef _WIN32
-        glewExperimental = GL_TRUE;
-        const GLenum glew_result = glewInit();
-        if (glew_result != GLEW_OK)
-        {
-            error = reinterpret_cast<const char *>(glewGetErrorString(glew_result));
-            shutdown();
-            return false;
-        }
-        if (!GLEW_VERSION_4_3)
-        {
-            const auto *version = glGetString(GL_VERSION);
-            error = "OpenGL 4.3 is required; the active driver provides " +
-                    std::string(version ? reinterpret_cast<const char *>(version) : "an unknown version") + ".";
-            shutdown();
-            return false;
-        }
-        glGetError();
+		gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
 #endif
         return true;
     }
