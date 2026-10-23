@@ -872,16 +872,39 @@ namespace sl::detail
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(params.normal_texture != 0 ? params.normal_texture : white_texture_));
                 glActiveTexture(GL_TEXTURE2);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(params.material_texture != 0 ? params.material_texture : white_texture_));
+                GLint previous_texture3 = 0;
+                glActiveTexture(GL_TEXTURE3);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture3);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(params.shadow_texture != 0 ? params.shadow_texture : white_texture_));
+                GLint previous_texture4 = 0;
+                glActiveTexture(GL_TEXTURE4);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(params.local_shadow_texture != 0 ? params.local_shadow_texture : white_texture_));
                 glActiveTexture(GL_TEXTURE0);
                 glUseProgram(program);
                 glUniform1i(glGetUniformLocation(program, "uTexture"), 0);
                 glUniform1i(glGetUniformLocation(program, "uNormalMap"), 1);
                 glUniform1i(glGetUniformLocation(program, "uMaterial"), 2);
+                glUniform1i(glGetUniformLocation(program, "uShadowMap"), 3);
+                glUniform4fv(glGetUniformLocation(program, "uShadow"), 1, params.shadow);
+                glUniformMatrix4fv(glGetUniformLocation(program, "uShadowMatrix"), 1, GL_FALSE, params.shadow_matrix);
                 glUniform4fv(glGetUniformLocation(program, "uPbr"), 1, params.pbr);
                 glUniform4fv(glGetUniformLocation(program, "uEmissive"), 1, params.emissive);
                 glUniform4fv(glGetUniformLocation(program, "uCameraRight"), 1, params.camera_right);
                 glUniform4fv(glGetUniformLocation(program, "uCameraUp"), 1, params.camera_up);
                 glUniform4fv(glGetUniformLocation(program, "uCameraForward"), 1, params.camera_forward);
+                glUniform4fv(glGetUniformLocation(program, "uCameraPosition"), 1, params.camera_position);
+                if (params.camera_position[3] > 0.5f)
+                {
+                    glUniform4fv(glGetUniformLocation(program, "uLocals"), static_cast<GLsizei>(params.camera_position[3]) * 4,
+                                 &params.local_lights[0][0]);
+                    if (params.shadow[3] > 0.5f)
+                    {
+                        glUniform4fv(glGetUniformLocation(program, "uLocals[64]"),
+                                     static_cast<GLsizei>(params.shadow[3]) * 24, &params.local_lights[local_shadow_matrix_base][0]);
+                    }
+                }
+                glUniform1i(glGetUniformLocation(program, "uLocalShadowMap"), 4);
                 glUniformMatrix4fv(glGetUniformLocation(program, "uMvp"), 1, GL_FALSE, params.mvp);
                 glUniform4fv(glGetUniformLocation(program, "uNormalRows"), 3, &params.normal_rows[0][0]);
                 glUniform4fv(glGetUniformLocation(program, "uLight"), 1, params.light);
@@ -942,6 +965,10 @@ namespace sl::detail
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture1));
                 glActiveTexture(GL_TEXTURE2);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture2));
+                glActiveTexture(GL_TEXTURE3);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture3));
+                glActiveTexture(GL_TEXTURE4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture4));
                 glActiveTexture(static_cast<GLenum>(previous_active_texture));
                 return true;
             }
@@ -999,8 +1026,29 @@ namespace sl::detail
                 glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(params.terrain_albedo));
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(params.terrain_normals != 0 ? params.terrain_normals : params.terrain_albedo));
+                GLint previous_texture2 = 0;
+                GLint previous_texture3 = 0;
+                glActiveTexture(GL_TEXTURE2);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture2);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(params.shadow_texture != 0 ? params.shadow_texture : white_texture_));
+                glActiveTexture(GL_TEXTURE3);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture3);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(params.local_shadow_texture != 0 ? params.local_shadow_texture : white_texture_));
                 glActiveTexture(GL_TEXTURE0);
                 glUseProgram(terrain_program_);
+                glUniform1i(glGetUniformLocation(terrain_program_, "uShadowMap"), 2);
+                glUniform1i(glGetUniformLocation(terrain_program_, "uLocalShadowMap"), 3);
+                glUniform4fv(glGetUniformLocation(terrain_program_, "uShadow"), 1, params.shadow);
+                glUniformMatrix4fv(glGetUniformLocation(terrain_program_, "uShadowMatrix"), 1, GL_FALSE, params.shadow_matrix);
+                glUniform4fv(glGetUniformLocation(terrain_program_, "uCameraPosition"), 1, params.camera_position);
+                if (params.camera_position[3] > 0.5f)
+                {
+                    glUniform4fv(glGetUniformLocation(terrain_program_, "uLocals"), static_cast<GLsizei>(params.camera_position[3]) * 4,
+                                 &params.local_lights[0][0]);
+                    if (params.shadow[3] > 0.5f)
+                        glUniform4fv(glGetUniformLocation(terrain_program_, "uLocals[64]"),
+                                     static_cast<GLsizei>(params.shadow[3]) * 24, &params.local_lights[local_shadow_matrix_base][0]);
+                }
                 float macro[4] = {params.terrain_macro[0], params.terrain_macro[1], params.terrain_macro[2],
                                   params.terrain_normals != 0 ? 1.0f : 0.0f};
                 glUniform1i(glGetUniformLocation(terrain_program_, "uAlbedo"), 0);
@@ -1035,6 +1083,10 @@ namespace sl::detail
                 glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(previous_array0));
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(previous_array1));
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture2));
+                glActiveTexture(GL_TEXTURE3);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture3));
                 glActiveTexture(static_cast<GLenum>(previous_active_texture));
                 return true;
             }

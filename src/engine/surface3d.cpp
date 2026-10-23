@@ -7,6 +7,7 @@
 #include "renderer.h"
 
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -21,11 +22,16 @@ namespace sl
             Surface3D *surface = nullptr;
             glm::mat4 view_projection{1.0f};
             Camera camera;
+            ShadowMap3D *shadow_pass = nullptr;
+            bool local_shadow_pass = false;
         };
 
         ActiveSurface active;
         Light3D current_light;
-
+        std::vector<LocalLight3D> local_lights;
+        const ShadowMap3D *current_shadow = nullptr;
+        float current_shadow_bias = 0.0015f;
+        const LocalShadowMap3D *current_local_shadow = nullptr;
         Vertex3D make_vertex(const glm::vec3 &position, const glm::vec3 &normal, Colour colour,
                              float u = 0.0f, float v = 0.0f)
         {
@@ -194,6 +200,184 @@ namespace sl
         end_render_target();
     }
 
+    ShadowMap3D *create_shadow_map_3d(int size)
+    {
+        if (size < 64)
+        {
+            detail::set_error("Shadow map size must be at least 64");
+            return nullptr;
+        }
+        Surface3D *surface = create_surface_3d(size, size, 1);
+        if (!surface)
+            return nullptr;
+        ShadowMap3D *map = new ShadowMap3D;
+        map->surface = surface;
+        map->size = size;
+        return map;
+    }
+
+    void destroy_shadow_map_3d(ShadowMap3D *map)
+    {
+        if (!map)
+            return;
+        if (current_shadow == map)
+            current_shadow = nullptr;
+        if (active.shadow_pass == map)
+            end_shadow_pass_3d();
+        destroy_surface_3d(map->surface);
+        delete map;
+    }
+
+    bool begin_shadow_pass_3d(ShadowMap3D *map, const glm::vec3 &centre, float radius)
+    {
+        if (!map || !map->surface || radius <= 0.0f || active.surface)
+        {
+            detail::set_error("Invalid shadow pass state");
+            return false;
+        }
+        const glm::vec3 direction = glm::normalize(current_light.direction);
+        const glm::vec3 up = std::abs(direction.y) > 0.99f ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+        const glm::mat4 rotation = glm::lookAt(glm::vec3(0.0f), direction, up);
+        // Snap the window to whole texels in light space so shadow edges do not shimmer as the focus moves.
+        const float texel = 2.0f * radius / static_cast<float>(map->size);
+        const glm::vec3 c = glm::vec3(rotation * glm::vec4(centre, 1.0f));
+        const float sx = std::round(c.x / texel) * texel;
+        const float sy = std::round(c.y / texel) * texel;
+        const glm::mat4 projection = glm::ortho(-radius, radius, -radius, radius, 0.0f, radius * 4.0f);
+        const glm::mat4 shift = glm::translate(glm::mat4(1.0f), glm::vec3(-sx, -sy, -(c.z + radius * 2.0f)));
+        map->view_projection = projection * shift * rotation;
+        map->texel_size = texel;
+        if (!begin_render_target(map->surface->bitmap))
+            return false;
+        active.surface = map->surface;
+        active.shadow_pass = map;
+        active.camera = Camera{};
+        active.view_projection = map->view_projection;
+        // Packed depth of 1 (white) marks "nothing here".
+        if (detail::Renderer *renderer = detail::active_renderer())
+            renderer->clear_3d(1.0f, 1.0f, 1.0f, 1.0f);
+        return true;
+    }
+
+    void end_shadow_pass_3d()
+    {
+        if (!active.shadow_pass)
+            return;
+        active.shadow_pass = nullptr;
+        active.surface = nullptr;
+        end_render_target();
+    }
+
+    void set_shadow_map_3d(const ShadowMap3D *map, float bias)
+    {
+        current_shadow = map;
+        current_shadow_bias = bias;
+    }
+
+    LocalShadowMap3D *create_local_shadow_map_3d(int face_size, int max_lights)
+    {
+        if (face_size < 64)
+        {
+            detail::set_error("Local shadow face size must be at least 64");
+            return nullptr;
+        }
+        max_lights = std::clamp(max_lights, 1, max_local_shadow_lights_3d);
+        Surface3D *face = create_surface_3d(face_size, face_size, 1);
+        if (!face)
+            return nullptr;
+        Bitmap *atlas = create_render_target(face_size * 3, face_size * 2 * max_lights);
+        if (!atlas)
+        {
+            destroy_surface_3d(face);
+            return nullptr;
+        }
+        LocalShadowMap3D *map = new LocalShadowMap3D;
+        map->face = face;
+        map->atlas = atlas;
+        map->face_size = face_size;
+        map->max_lights = max_lights;
+        std::fill(std::begin(map->light_slot), std::end(map->light_slot), -1);
+        return map;
+    }
+
+    void destroy_local_shadow_map_3d(LocalShadowMap3D *map)
+    {
+        if (!map)
+            return;
+        if (current_local_shadow == map)
+            current_local_shadow = nullptr;
+        destroy_surface_3d(map->face);
+        destroy_bitmap(map->atlas);
+        delete map;
+    }
+
+    bool render_local_shadows_3d(LocalShadowMap3D *map, const std::function<void()> &draw_casters)
+    {
+        detail::Renderer *renderer = detail::active_renderer();
+        if (!map || !map->face || !map->atlas || !draw_casters || !renderer || active.surface)
+        {
+            detail::set_error("Invalid local shadow pass state");
+            return false;
+        }
+        map->slots_used = 0;
+        std::fill(std::begin(map->light_slot), std::end(map->light_slot), -1);
+        for (std::size_t i = 0; i < local_lights.size() && map->slots_used < map->max_lights; ++i)
+            if (local_lights[i].cast_shadow)
+                map->light_slot[i] = map->slots_used++;
+        // Packed depth of 1 (white) marks "nothing here", including for faces that are never drawn.
+        if (!begin_render_target(map->atlas))
+            return false;
+        clear_render_target(Colour{255, 255, 255, 255});
+        end_render_target();
+
+        const glm::vec3 axes[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (std::size_t i = 0; i < local_lights.size(); ++i)
+        {
+            const int slot = map->light_slot[i];
+            if (slot < 0)
+                continue;
+            const LocalLight3D &light = local_lights[i];
+            const bool spot = light.outer_angle > 0.0f && glm::length(light.direction) > 0.0f;
+            const float near_plane = std::max(0.05f, light.range * 0.004f);
+            map->slot_faces[slot] = spot ? 1 : 6;
+            map->slot_near[slot] = near_plane;
+            map->slot_far[slot] = std::max(light.range, near_plane * 2.0f);
+            for (int face = 0; face < map->slot_faces[slot]; ++face)
+            {
+                const glm::vec3 direction = spot ? glm::normalize(light.direction) : axes[face];
+                const glm::vec3 up = std::abs(direction.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+                const float fov = spot ? std::clamp(2.0f * light.outer_angle + 6.0f, 20.0f, 170.0f) : 94.0f;
+                const glm::mat4 projection =
+                    glm::perspective(glm::radians(fov), 1.0f, near_plane, map->slot_far[slot]);
+                map->view_projection[slot][face] = projection * glm::lookAt(light.position, light.position + direction, up);
+
+                if (!begin_render_target(map->face->bitmap))
+                    return false;
+                active.surface = map->face;
+                active.local_shadow_pass = true;
+                active.camera = Camera{};
+                active.view_projection = map->view_projection[slot][face];
+                renderer->clear_3d(1.0f, 1.0f, 1.0f, 1.0f);
+                draw_casters();
+                active.local_shadow_pass = false;
+                active.surface = nullptr;
+                end_render_target();
+
+                if (!begin_render_target(map->atlas))
+                    return false;
+                draw_sprite(map->face->bitmap, static_cast<float>((face % 3) * map->face_size),
+                            static_cast<float>((slot * 2 + face / 3) * map->face_size));
+                end_render_target();
+            }
+        }
+        return true;
+    }
+
+    void set_local_shadow_map_3d(const LocalShadowMap3D *map)
+    {
+        current_local_shadow = map;
+    }
+
     void clear_surface_3d(Colour colour)
     {
         detail::Renderer *renderer = detail::active_renderer();
@@ -206,6 +390,16 @@ namespace sl
     void set_light_3d(const Light3D &light)
     {
         current_light = light;
+    }
+
+    void set_local_lights_3d(const std::vector<LocalLight3D> &lights)
+    {
+        local_lights.assign(lights.begin(), lights.begin() + std::min<std::size_t>(lights.size(), max_local_lights_3d));
+    }
+
+    std::vector<LocalLight3D> get_local_lights_3d()
+    {
+        return local_lights;
     }
 
     Light3D get_light_3d()
@@ -457,6 +651,9 @@ namespace sl
             detail::set_error("Terrain shading cannot be drawn with draw_mesh_instanced");
             return false;
         }
+        const bool shadow_pass = active.shadow_pass != nullptr || active.local_shadow_pass;
+        if (shadow_pass && (material.blend != MaterialBlend::opaque || !material.lit || material.terrain.enabled))
+            return true;
         detail::MeshDrawParams params{};
         const glm::mat4 mvp = active.view_projection * model;
         for (int column = 0; column < 4; ++column)
@@ -543,8 +740,96 @@ namespace sl
             params.light[3] = 1.0f;
         }
         params.light_colour[3] = material.alpha_cutoff;
+        if (shadow_pass)
+        {
+            params.shadow[0] = 2.0f;
+            params.cull = CullMode::none;
+            const bool drawn = instance_buffer != 0
+                                   ? renderer->draw_mesh_instanced(mesh->handle, params, instance_buffer, instance_count)
+                                   : renderer->draw_mesh(mesh->handle, params);
+            if (!drawn)
+                detail::set_error("Backend failed to draw the shadow caster");
+            return drawn;
+        }
         detail::apply_environment(params, material.fog);
-        if (material.pbr && material.lit && !material.terrain.enabled && detail::apply_pbr_camera(params))
+        const bool want_pbr = material.pbr && material.lit && !material.terrain.enabled;
+        const bool want_locals = material.lit && !local_lights.empty();
+        const bool want_shadow = material.lit && current_shadow && current_shadow->surface;
+        const bool want_local_shadow = want_locals && current_local_shadow && current_local_shadow->slots_used > 0;
+        const bool have_camera = (want_pbr || want_locals || want_shadow) && detail::apply_pbr_camera(params);
+        if (want_shadow && have_camera)
+        {
+            params.shadow[0] = 1.0f;
+            params.shadow[1] = current_shadow_bias;
+            params.shadow[2] = current_shadow->texel_size;
+            params.shadow_texture = current_shadow->surface->bitmap->gpu_texture;
+            for (int column = 0; column < 4; ++column)
+                for (int row = 0; row < 4; ++row)
+                    params.shadow_matrix[column * 4 + row] = current_shadow->view_projection[column][row];
+            params.camera_position[0] = active.camera.position.x;
+            params.camera_position[1] = active.camera.position.y;
+            params.camera_position[2] = active.camera.position.z;
+        }
+        if (want_locals && have_camera)
+        {
+            params.camera_position[0] = active.camera.position.x;
+            params.camera_position[1] = active.camera.position.y;
+            params.camera_position[2] = active.camera.position.z;
+            params.camera_position[0] = active.camera.position.x;
+            params.camera_position[1] = active.camera.position.y;
+            params.camera_position[2] = active.camera.position.z;
+            params.camera_position[3] = static_cast<float>(local_lights.size());
+            for (std::size_t i = 0; i < local_lights.size(); ++i)
+            {
+                const LocalLight3D &l = local_lights[i];
+                float(*packed)[4] = &params.local_lights[i * 4];
+                const float scale = std::max(l.intensity, 0.0f);
+                packed[0][0] = l.position.x;
+                packed[0][1] = l.position.y;
+                packed[0][2] = l.position.z;
+                packed[0][3] = std::max(l.range, 1.0e-3f);
+                packed[1][0] = l.colour.r * scale;
+                packed[1][1] = l.colour.g * scale;
+                packed[1][2] = l.colour.b * scale;
+                packed[1][3] = -1.0f;
+                packed[2][0] = packed[2][1] = packed[2][2] = packed[2][3] = 0.0f;
+                packed[3][0] = -1.0f;
+                packed[3][1] = packed[3][2] = packed[3][3] = 0.0f;
+                if (want_local_shadow && current_local_shadow->light_slot[i] >= 0)
+                {
+                    const int slot = current_local_shadow->light_slot[i];
+                    packed[3][0] = static_cast<float>(slot);
+                    packed[3][1] = current_local_shadow->slot_near[slot];
+                    packed[3][2] = current_local_shadow->slot_far[slot];
+                }
+                if (l.outer_angle > 0.0f && glm::length(l.direction) > 0.0f)
+                {
+                    const float outer = std::cos(glm::radians(std::min(l.outer_angle, 89.0f)));
+                    const float inner = std::cos(glm::radians(std::clamp(l.inner_angle, 0.0f, l.outer_angle)));
+                    const glm::vec3 d = glm::normalize(l.direction);
+                    packed[1][3] = outer;
+                    packed[2][0] = d.x;
+                    packed[2][1] = d.y;
+                    packed[2][2] = d.z;
+                    packed[2][3] = 1.0f / std::max(inner - outer, 1.0e-3f);
+                }
+            }
+        }
+        if (want_local_shadow && have_camera)
+        {
+            const LocalShadowMap3D &map = *current_local_shadow;
+            params.local_shadow_texture = map.atlas->gpu_texture;
+            params.shadow[3] = static_cast<float>(map.slots_used);
+            for (int slot = 0; slot < map.slots_used; ++slot)
+                for (int face = 0; face < map.slot_faces[slot]; ++face)
+                {
+                    float *destination = &params.local_lights[detail::local_shadow_matrix_base + (slot * 6 + face) * 4][0];
+                    for (int column = 0; column < 4; ++column)
+                        for (int row = 0; row < 4; ++row)
+                            destination[column * 4 + row] = map.view_projection[slot][face][column][row];
+                }
+        }
+        if (want_pbr && have_camera)
         {
             if (material.metallic_roughness)
             {

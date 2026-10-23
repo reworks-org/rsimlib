@@ -679,6 +679,7 @@ Post-processing effects process regions or full-screen bitmaps using pre-compile
 
 - **`sl::PingPongBuffer`**: Manages double-buffered offscreen render targets for multi-pass post-processing chains (`begin`, `advance`, `source`, `target`).
 - **`sl::Bloom`**: Thresholds bright pixels, downsamples, applies separable Gaussian blur, and composites glow (`set_threshold`, `set_intensity`, `set_radius`, `apply`).
+- **`sl::Hdr`**: Pseudo-HDR post-process on the 8-bit frame. Expands near-white pixels to scene values up to `set_white_point`, blooms values above `set_bloom_threshold`, then applies `set_exposure` and a `HdrTonemap` curve (`reinhard` round-trips exactly at exposure 1, `aces` is filmic). Built from custom shaders, so it works on every backend.
 - **`sl::Vignette`**: Darkens image edges in a soft-radius circle (`set_radius`, `set_softness`, `set_intensity`, `apply`).
 - **`sl::ColourAdjust`**: Adjusts brightness, contrast, saturation, and exposure (`set_brightness`, `set_contrast`, `set_saturation`, `set_exposure`, `apply`).
 - **`sl::ScreenShake`**: Applies decaying camera offsets to 2D projections (`trigger(amplitude, duration)`, `update(delta_seconds)`, `active()`).
@@ -821,7 +822,10 @@ A `Surface3D` is an offscreen colour+depth target you draw 3D meshes into, then 
 
 - `create_surface_3d(w, h, samples = 1)` / `destroy_surface_3d(surface)`: `samples` requests MSAA (e.g. 4), clamped to GPU support; `surface_3d_samples(surface)` reports the count in use. Both 3D meshes and 2D elements (HUD, text, sprites) can be drawn into multisampled surfaces on OpenGL, Vulkan and Direct3D 12.
 - `begin_surface_3d(surface, camera)` / `end_surface_3d()`: bracket 3D drawing. Contents are undefined until `clear_surface_3d(colour)` is called.
-- `set_light_3d({direction, ambient})`: one directional light.
+- `set_light_3d({direction, ambient, colour})`: the directional light (the sun).
+- `set_local_lights_3d(lights)` / `get_local_lights_3d()`: up to `max_local_lights_3d` (16) point and spot lights, each a `LocalLight3D` with `position`, `colour`, `intensity`, `range` (light is exactly zero beyond it), and for spots a `direction` plus `inner_angle`/`outer_angle` in degrees (an `outer_angle` of 0 makes a point light). They add to the sun on lit meshes (PBR and Lambert); unlit materials and `Material::terrain` draws ignore them. Positions use the same space as the camera.
+- Sun shadows: `create_shadow_map_3d(size)` / `destroy_shadow_map_3d(map)`, then each frame `begin_shadow_pass_3d(map, centre, radius)`, draw the casters with `draw_mesh` / `draw_mesh_instanced`, `end_shadow_pass_3d()`, and enable lookups with `set_shadow_map_3d(map, bias)` (`nullptr` turns them off). The map is an orthographic window of side `2 * radius` around `centre`, looking along the `Light3D` direction, snapped to texels so edges do not shimmer; lookups use a 5x5 soft filter. Only opaque lit meshes cast; terrain receives the shadows but casts none, and blended and unlit draws neither cast nor receive. Do the pass outside `begin_surface_3d()` / `end_surface_3d()`. Supported on OpenGL and Vulkan; Direct3D 12 has the same shader and constant-buffer changes but is untested on Linux.
+- Local light shadows: set `LocalLight3D::cast_shadow` on up to `max_local_shadow_lights_3d` (4) lights, create the maps with `create_local_shadow_map_3d(face_size, max_lights)` / `destroy_local_shadow_map_3d(map)`, call `set_local_lights_3d()` and then `render_local_shadows_3d(map, draw_casters)` outside `begin_surface_3d()`, and enable lookups with `set_local_shadow_map_3d(map)` (`nullptr` turns them off). `draw_casters` is called once per face: one for a spotlight, six (a cube) for a point light; it should `draw_mesh` every caster. Call it again whenever the lights or casters move, and keep the lights unchanged between the render and the draw calls. Lookups use a 4x4 soft filter and a bias in texels. Terrain (including the textured terrain shader) receives local lights, local shadows and sun shadows. Supported on OpenGL and Vulkan; on Direct3D 12 the lights work but local shadows are not implemented yet.
 - `create_cube_mesh`, `create_plane_mesh`, `create_sphere_mesh`, `create_mesh(vertices, indices)` / `destroy_mesh`
 - `draw_mesh(mesh, model_matrix, {tint, lit, texture, cull})`: `texture` is an optional `Bitmap*` sampled with the vertex `uv` (v = 0 is the image top) and multiplied into the colour. `cull` is a `CullMode`: `back` (default; clockwise-wound faces are culled), `front`, or `none`.
 - `draw_mesh_instanced(mesh, instances, material)`: draw many copies of a mesh in one hardware-instanced call. `instances` is a `std::vector<InstanceData3D>`, each a `model` matrix plus a `tint` that multiplies the vertex colours (rgb and alpha) on top of `Material::tint`. The view-projection is applied once and each model matrix in the vertex shader, with correct lighting for non-uniform scale and mirrored instances. This overload uploads the instances every call, so it suits instances that change each frame; calls in the same frame do not overwrite one another.
@@ -939,6 +943,7 @@ void destroy_sample(Sample *sample);
 
 std::uint64_t play_sample(Sample *sample, int volume = 255, int pan = 128, int frequency = 1000, int loops = 0);
 void stop_voice(std::uint64_t voice);
+void set_voice_volume(std::uint64_t voice, int volume); // 0-255; adjusts a playing voice, e.g. to follow a throttle
 void stop_sample(Sample *sample);
 void stop_all_samples();
 void audio_fx_set_volume(int volume); // 0-255
