@@ -11,9 +11,9 @@
 #include "error.h"
 #include "renderer.h"
 
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
-#include <SDL2/SDL_opengl.h>
+#include <SDL3/SDL.h>
+#include <SDL3_TTF/SDL_ttf.h>
+#include <glad/glad.h>
 
 #include <memory>
 #include <string_view>
@@ -139,7 +139,7 @@ namespace sl
         return "Unknown";
     }
 
-    bool set_gfx_mode(const char* title, int driver, int requestedWidth, int requestedHeight, int virtualWidth, int virtualHeight, SDL_WindowFlags windowflags)
+    bool set_gfx_mode(const char* title, SDL_WindowFlags windowflags, int driver, int requestedWidth, int requestedHeight, int virtualWidth, int virtualHeight)
     {
         const bool use_desktop_resolution =
             driver == GFX_AUTODETECT_FULLSCREEN && requestedWidth == 0 && requestedHeight == 0;
@@ -154,15 +154,11 @@ namespace sl
 
         if (use_desktop_resolution)
         {
-            SDL_DisplayMode desktop_mode{};
-            if (SDL_GetDesktopDisplayMode(0, &desktop_mode) != 0)
-            {
-                sl::detail::set_error(SDL_GetError());
-                
-                return false;
-            }
-            requestedWidth = desktop_mode.w;
-            requestedHeight = desktop_mode.h;
+			auto display_id = SDL_GetPrimaryDisplay();
+			auto desktop_mode = SDL_GetDesktopDisplayMode(display_id);
+
+            requestedWidth = desktop_mode->w;
+            requestedHeight = desktop_mode->h;
         }
 
         ttfInitialized = true;
@@ -174,13 +170,9 @@ namespace sl
             ttfInitialized = false;
             return false;
         }
-        
-        if (driver == GFX_AUTODETECT_FULLSCREEN)
-            windowflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+
         window = SDL_CreateWindow(
             title,
-            SDL_WINDOWPOS_CENTERED,
-            SDL_WINDOWPOS_CENTERED,
             requestedWidth,
             requestedHeight,
             windowflags);
@@ -260,7 +252,14 @@ namespace sl
         {
             // a custom bitmap is drawn by the library, so the OS cursor is hidden while it is in use
             const bool softwareCursor = mouseVisible && mouse_bitmap() != nullptr;
-            SDL_ShowCursor(mouseVisible && !softwareCursor ? SDL_ENABLE : SDL_DISABLE);
+			if (mouseVisible && !softwareCursor)
+			{
+				SDL_ShowCursor();
+			}
+			else
+			{
+				SDL_HideCursor();
+            }
         }
     } // namespace detail
 
@@ -284,7 +283,7 @@ namespace sl
 
     bool set_fullscreen(bool enabled)
     {
-        if (!window || SDL_SetWindowFullscreen(window, enabled ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0)
+        if (!window || SDL_SetWindowFullscreen(window, enabled) != 0)
         {
             return false;
         }

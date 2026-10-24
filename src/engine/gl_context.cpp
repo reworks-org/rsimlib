@@ -3,13 +3,9 @@
  */
 #include "gl_context.h"
 
-#ifdef _WIN32
 #include <glad/glad.h>
-#else
-#include <SDL2/SDL_opengl.h>
-#endif
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 namespace sl::detail
 {
@@ -18,19 +14,11 @@ namespace sl::detail
         shutdown();
     }
 
-    void GLContext::configure_window_attributes()
-    {
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    }
-
     bool GLContext::initialise(SDL_Window *window, std::string &error)
     {
         window_ = window;
         context_ = SDL_GL_CreateContext(window);
+		SDL_GL_MakeCurrent(window_, context_);
         if (!context_)
         {
             error = SDL_GetError();
@@ -47,7 +35,7 @@ namespace sl::detail
     {
         if (context_)
         {
-            SDL_GL_DeleteContext(context_);
+            SDL_GL_DestroyContext(context_);
             context_ = nullptr;
         }
         window_ = nullptr;

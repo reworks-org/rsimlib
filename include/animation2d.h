@@ -2,7 +2,8 @@
 
 #include "atlas.h"
 #include "draw.h"
-#include "json.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <fstream>

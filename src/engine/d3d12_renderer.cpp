@@ -350,9 +350,6 @@ namespace sl::detail
         class D3D12Renderer final : public Renderer
         {
         public:
-            void configure_window() override {}
-            std::uint32_t window_flags() const override { return SDL_WINDOW_RESIZABLE; }
-
             bool initialise(SDL_Window *window, std::string &error) override
             {
                 window_ = window;

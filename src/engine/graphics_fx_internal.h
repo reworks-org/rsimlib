@@ -5,13 +5,7 @@
 
 #include "graphics_fx.h"
 
-#ifdef _WIN32
 #include <glad/glad.h>
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <SDL2/SDL_opengl.h>
-#include <SDL2/SDL_opengl_glext.h>
-#endif
 
 #include <string>
 

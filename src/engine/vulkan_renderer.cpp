@@ -126,11 +126,6 @@ namespace sl::detail
         class VulkanRenderer final : public Renderer
         {
         public:
-            void configure_window() override
-            {
-                window_flags_ = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
-            }
-            std::uint32_t window_flags() const override { return window_flags_; }
             bool initialise(SDL_Window *window, std::string &error) override
             {
                 window_ = window;
@@ -2616,7 +2611,6 @@ namespace sl::detail
             }
 
             SDL_Window *window_ = nullptr;
-            unsigned int window_flags_ = 0;
             VulkanContext context_;
             std::string last_error_;
             VulkanDescriptorSetLayout descriptor_layout_;

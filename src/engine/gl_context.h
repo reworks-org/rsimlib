@@ -16,9 +16,6 @@ namespace sl::detail
         GLContext(const GLContext &) = delete;
         GLContext &operator=(const GLContext &) = delete;
 
-        /** Request a core 4.3 context; must be called before the SDL window is created. */
-        static void configure_window_attributes();
-
         bool initialise(SDL_Window *window, std::string &error);
         void shutdown();
         bool resize(int width, int height, std::string &error);

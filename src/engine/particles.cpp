@@ -7,7 +7,7 @@
 #include "display.h"
 #include "gl2d.h"
 
-#include <SDL2/SDL_opengl.h>
+#include <glad/glad.h>
 
 #include <algorithm>
 #include <cmath>

@@ -6,13 +6,7 @@
 #include "gl_context.h"
 #include "shader_paths.h"
 
-#ifdef _WIN32
 #include <glad/glad.h>
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <SDL2/SDL_opengl.h>
-#include <SDL2/SDL_opengl_glext.h>
-#endif
 
 #include <SDL2/SDL.h>
 
@@ -108,12 +102,6 @@ namespace sl::detail
         class GLRenderer final : public Renderer
         {
         public:
-            void configure_window() override
-            {
-                GLContext::configure_window_attributes();
-            }
-            std::uint32_t window_flags() const override { return SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE; }
-
             bool initialise(SDL_Window *window, std::string &error) override
             {
                 return context_.initialise(window, error);

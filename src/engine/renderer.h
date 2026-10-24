@@ -366,11 +366,6 @@ namespace sl::detail
     {
     public:
         virtual ~Renderer() = default;
-
-        /** Configure SDL window attributes before the window is created. */
-        virtual void configure_window() = 0;
-        /** Return the SDL window flags required by this backend. */
-        virtual std::uint32_t window_flags() const = 0;
         /** Create the backend context for an existing SDL window. */
         virtual bool initialise(SDL_Window *window, std::string &error) = 0;
         /** Release backend resources. */

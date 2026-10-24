@@ -1,7 +1,7 @@
 #include "gl2d.h"
 #include "display.h"
 
-#include <SDL2/SDL_opengl.h>
+#include <glad/glad.h>
 
 namespace sl::detail
 {
