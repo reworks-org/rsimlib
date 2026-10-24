@@ -274,6 +274,13 @@ namespace sl
         current_shadow_bias = bias;
     }
 
+    const ShadowMap3D *get_shadow_map_3d(float *bias)
+    {
+        if (bias)
+            *bias = current_shadow_bias;
+        return current_shadow;
+    }
+
     LocalShadowMap3D *create_local_shadow_map_3d(int face_size, int max_lights)
     {
         if (face_size < 64)
@@ -376,6 +383,11 @@ namespace sl
     void set_local_shadow_map_3d(const LocalShadowMap3D *map)
     {
         current_local_shadow = map;
+    }
+
+    const LocalShadowMap3D *get_local_shadow_map_3d()
+    {
+        return current_local_shadow;
     }
 
     void clear_surface_3d(Colour colour)
@@ -718,6 +730,7 @@ namespace sl
                     params.terrain_layers[i][3] = static_cast<float>(std::max(textures->tiles_per_period[i], 1));
                     for (int c = 0; c < 3; ++c)
                         params.terrain_average[i][c] = textures->average[i][c];
+                    params.terrain_average[i][3] = textures->specular[i];
                 }
                 params.terrain_macro[0] = static_cast<float>(textures->macro_layer);
                 params.terrain_macro[1] = std::max(textures->macro_tile_metres, 1.0e-3f);
@@ -752,7 +765,7 @@ namespace sl
             return drawn;
         }
         detail::apply_environment(params, material.fog);
-        const bool want_pbr = material.pbr && material.lit && !material.terrain.enabled;
+        const bool want_pbr = material.pbr && material.lit;
         const bool want_locals = material.lit && !local_lights.empty();
         const bool want_shadow = material.lit && current_shadow && current_shadow->surface;
         const bool want_local_shadow = want_locals && current_local_shadow && current_local_shadow->slots_used > 0;

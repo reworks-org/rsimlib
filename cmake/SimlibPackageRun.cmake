@@ -1,0 +1,75 @@
+# Script run by the <target>_package target created by simlib_add_package().
+file(REMOVE_RECURSE "${STAGE}")
+file(REMOVE "${ZIP}")
+file(MAKE_DIRECTORY "${STAGE}")
+
+file(COPY "${EXE}" DESTINATION "${STAGE}")
+foreach(_exe IN LISTS EXTRA_EXES)
+    file(COPY "${_exe}" DESTINATION "${STAGE}")
+endforeach()
+
+foreach(_dll IN LISTS DLLS)
+    if(EXISTS "${_dll}")
+        file(COPY "${_dll}" DESTINATION "${STAGE}")
+    endif()
+endforeach()
+
+# Dependencies found through plain libraries rather than imported targets (vcpkg copies them beside the
+# executable) are missed by TARGET_RUNTIME_DLLS. vulkan-1.dll comes from the user's GPU driver.
+get_filename_component(_exe_dir "${EXE}" DIRECTORY)
+file(GLOB _local_dlls "${_exe_dir}/*.dll")
+foreach(_dll IN LISTS _local_dlls)
+    get_filename_component(_name "${_dll}" NAME)
+    if(NOT _name STREQUAL "vulkan-1.dll")
+        file(COPY "${_dll}" DESTINATION "${STAGE}")
+    endif()
+endforeach()
+file(REMOVE "${STAGE}/vulkan-1.dll")
+
+foreach(_dir IN LISTS SHADER_DIRS)
+    if(IS_DIRECTORY "${_dir}")
+        file(COPY "${_dir}/" DESTINATION "${STAGE}/shaders")
+    endif()
+endforeach()
+
+if(DXC_DIR)
+    foreach(_name dxcompiler.dll dxil.dll)
+        if(EXISTS "${DXC_DIR}/${_name}")
+            file(COPY "${DXC_DIR}/${_name}" DESTINATION "${STAGE}")
+        endif()
+    endforeach()
+endif()
+
+foreach(_dir IN LISTS LICENSE_DIRS)
+    if(IS_DIRECTORY "${_dir}")
+        file(COPY "${_dir}/" DESTINATION "${STAGE}/licenses")
+    endif()
+endforeach()
+
+foreach(_asset IN LISTS ASSETS)
+    if(IS_DIRECTORY "${_asset}")
+        get_filename_component(_n "${_asset}" NAME)
+        file(COPY "${_asset}" DESTINATION "${STAGE}")
+    elseif(EXISTS "${_asset}")
+        file(COPY "${_asset}" DESTINATION "${STAGE}")
+    else()
+        message(WARNING "Asset not found, skipped: ${_asset}")
+    endif()
+endforeach()
+
+foreach(_f IN LISTS EXTRA)
+    if(EXISTS "${_f}")
+        file(COPY "${_f}" DESTINATION "${STAGE}")
+    endif()
+endforeach()
+
+get_filename_component(_parent "${STAGE}" DIRECTORY)
+get_filename_component(_folder "${STAGE}" NAME)
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E tar cf "${ZIP}" --format=zip "${_folder}"
+    WORKING_DIRECTORY "${_parent}"
+    RESULT_VARIABLE _rc)
+if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR "Unable to create ${ZIP}")
+endif()
+message(STATUS "Created ${ZIP}")

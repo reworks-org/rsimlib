@@ -57,12 +57,31 @@ foreach(_renderer IN LISTS SIMLIB_RENDERERS)
 endforeach()
 message(STATUS "simlib renderers: ${SIMLIB_RENDERERS}")
 
+option(SIMLIB_D3D12_BUILD_TRANSLATION "Build glslang and SPIRV-Cross from source for Direct3D 12 when they are not installed (slower first build, needs network)" ON)
+option(SIMLIB_D3D12_REQUIRE_TRANSLATION "Fail the configure step if the Direct3D 12 GLSL translator (glslang, SPIRV-Cross) is missing" ON)
 option(SIMLIB_VALIDATE_SHADERS "Validate checked-in GLSL shaders with glslangValidator" ON)
+option(SIMLIB_BUILD_SHADER_COMPILER "Build glslang's compiler from source to generate the Vulkan .spv shaders when glslangValidator is not installed (needs network and Python 3)" ON)
 
+set(SIMLIB_SHADER_COMPILER_BUILT OFF)
 if(SIMLIB_VALIDATE_SHADERS)
     find_program(GLSLANG_VALIDATOR glslangValidator)
     find_program(SPIRV_VAL spirv-val)
-    if(GLSLANG_VALIDATOR)
+    set(SIMLIB_SHADER_COMPILER "${GLSLANG_VALIDATOR}")
+    if(NOT SIMLIB_SHADER_COMPILER AND SIMLIB_RENDER_VULKAN AND SIMLIB_BUILD_SHADER_COMPILER)
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+        if(Python3_FOUND)
+            message(STATUS "glslangValidator not installed: building glslang's compiler from source to generate the Vulkan shaders")
+            set(SIMLIB_FETCH_GLSLANG_BINARIES ON)
+            include(cmake/SimlibFetchShaderTranslation.cmake)
+            set(SIMLIB_SHADER_COMPILER glslang-standalone)
+            set(SIMLIB_SHADER_COMPILER_BUILT ON)
+        else()
+            message(WARNING "glslangValidator not found and Python 3 is not available to build it from source: the Vulkan "
+                            "backend will have no .spv shaders. Install Python 3 or glslangValidator (Vulkan SDK, or "
+                            "'vcpkg install glslang[tools]'), or set -DSIMLIB_BUILD_SHADER_COMPILER=OFF to silence this.")
+        endif()
+    endif()
+    if(SIMLIB_SHADER_COMPILER)
         set(SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
         set(GLSL_SHADER_BINARY_DIR "${SHADER_BINARY_DIR}/glsl")
         set(VULKAN_SHADER_BINARY_DIR "${SHADER_BINARY_DIR}/vulkan")
@@ -112,7 +131,7 @@ if(SIMLIB_VALIDATE_SHADERS)
             endif()
             add_custom_command(
                 OUTPUT "${SHADER_BINARY}"
-                COMMAND "${GLSLANG_VALIDATOR}" -G --auto-map-locations --auto-map-bindings
+                COMMAND "${SIMLIB_SHADER_COMPILER}" -G --auto-map-locations --auto-map-bindings
                         -S "${SHADER_STAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/glsl/${SHADER_SOURCE}"
                         -o "${SHADER_BINARY}"
                 DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/glsl/${SHADER_SOURCE}"
@@ -145,7 +164,7 @@ if(SIMLIB_VALIDATE_SHADERS)
             set(VULKAN_SHADER_BINARY "${VULKAN_SHADER_BINARY_DIR}/${VULKAN_SHADER_SOURCE}.spv")
             add_custom_command(
                 OUTPUT "${VULKAN_SHADER_BINARY}"
-                COMMAND "${GLSLANG_VALIDATOR}" -V --auto-map-locations --auto-map-bindings
+                COMMAND "${SIMLIB_SHADER_COMPILER}" -V --auto-map-locations --auto-map-bindings
                         -S "${VULKAN_SHADER_STAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan/${VULKAN_SHADER_SOURCE}"
                         -o "${VULKAN_SHADER_BINARY}"
                 DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan/${VULKAN_SHADER_SOURCE}"
@@ -179,6 +198,11 @@ endif()
 find_package(PNG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(SQLite3 REQUIRED)
+if(TARGET SQLite3::SQLite3)
+    set(_SIMLIB_SQLITE_TARGET SQLite3::SQLite3)
+else()
+    set(_SIMLIB_SQLITE_TARGET SQLite::SQLite3)
+endif()
 find_package(SDL2 REQUIRED)
 if(SIMLIB_RENDER_VULKAN)
     find_package(Vulkan REQUIRED)
@@ -368,8 +392,11 @@ add_library(simlib STATIC
     src/engine/flight.cpp
     src/engine/atmosphere.cpp
     src/engine/clutter.cpp
+    src/engine/props3d.cpp
+    src/engine/controls.cpp
     src/engine/clutter_layer.cpp
     src/engine/terrain.cpp
+    src/engine/ocean.cpp
     src/engine/terrain_sources.cpp
     src/engine/renderer.cpp
     src/engine/animated_sprite.cpp
@@ -406,17 +433,21 @@ else()
     target_sources(simlib PRIVATE src/engine/video_none.cpp)
 endif()
 target_compile_definitions(simlib PUBLIC SIMLIB_VIDEO_BACKEND_${SIMLIB_VIDEO})
-if(NOT GLSLANG_VALIDATOR)
+if(NOT GLSLANG_VALIDATOR AND NOT SIMLIB_SHADER_COMPILER_BUILT)
     find_program(GLSLANG_VALIDATOR glslangValidator)
 endif()
-if(NOT GLSLANG_VALIDATOR)
-    set(GLSLANG_VALIDATOR "")
+if(SIMLIB_SHADER_COMPILER_BUILT)
+    # Runtime Vulkan shader compilation uses the compiler built alongside the library.
+    set(SIMLIB_RUNTIME_GLSLANG "$<TARGET_FILE:glslang-standalone>")
+    add_dependencies(simlib glslang-standalone)
+else()
+    set(SIMLIB_RUNTIME_GLSLANG "${GLSLANG_VALIDATOR}")
 endif()
 target_compile_definitions(simlib PRIVATE
     SIMLIB_INSTALL_DATA_DIR="${CMAKE_INSTALL_FULL_DATADIR}/simlib"
     SIMLIB_BUILD_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     SIMLIB_BUILD_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
-    SIMLIB_GLSLANG_VALIDATOR="${GLSLANG_VALIDATOR}"
+    SIMLIB_GLSLANG_VALIDATOR="${SIMLIB_RUNTIME_GLSLANG}"
 )
 target_link_libraries(simlib PUBLIC PNG::PNG ZLIB::ZLIB lua sol2)
 if(SIMLIB_RENDER_GL)
@@ -443,7 +474,10 @@ if(SIMLIB_RENDER_D3D12)
     target_link_libraries(simlib PRIVATE d3d12 dxgi d3dcompiler)
     # The D3D12 backend translates GLSL to HLSL (glslang -> SPIR-V -> SPIRV-Cross) at runtime.
     # Install with: vcpkg install glslang:x64-windows spirv-cross:x64-windows
-    find_package(glslang CONFIG QUIET)
+    # When glslang was already fetched for the shader compiler, reuse that copy: mixing it with an installed one clashes on target names.
+    if(NOT TARGET simlib_glslang)
+        find_package(glslang CONFIG QUIET)
+    endif()
     set(_sc_prefix "")
     if(DEFINED _VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         set(_sc_prefix "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
@@ -463,14 +497,27 @@ if(SIMLIB_RENDER_D3D12)
             list(APPEND _sc_libs optimized "${SPIRV_CROSS_${_sc_name}_RELEASE}" debug "${SPIRV_CROSS_${_sc_name}_DEBUG}")
         endif()
     endforeach()
-    if(TARGET glslang::glslang AND TARGET glslang::SPIRV AND SPIRV_CROSS_INCLUDE_DIR AND _sc_found)
+    if(NOT TARGET simlib_glslang AND TARGET glslang::glslang AND TARGET glslang::SPIRV AND SPIRV_CROSS_INCLUDE_DIR AND _sc_found)
         target_compile_definitions(simlib PRIVATE SIMLIB_D3D12_SHADER_TRANSLATION=1)
         target_include_directories(simlib PRIVATE "${SPIRV_CROSS_INCLUDE_DIR}")
         target_link_libraries(simlib PRIVATE glslang::glslang glslang::SPIRV
                               glslang::glslang-default-resource-limits ${_sc_libs})
+    elseif(TARGET simlib_glslang OR SIMLIB_D3D12_BUILD_TRANSLATION)
+        message(STATUS "Building glslang/spirv-cross from source for the Direct3D 12 backend")
+        include(cmake/SimlibFetchShaderTranslation.cmake)
+        target_compile_definitions(simlib PRIVATE SIMLIB_D3D12_SHADER_TRANSLATION=1 SIMLIB_TRANSLATION_FETCHED=1)
+        target_include_directories(simlib PRIVATE ${SIMLIB_TRANSLATION_FETCHED_INCLUDES})
+        # Not exported: an installed simlib built this way still needs these static libraries linked into client apps.
+        target_link_libraries(simlib PRIVATE $<BUILD_LOCAL_INTERFACE:simlib_glslang> $<BUILD_LOCAL_INTERFACE:simlib_spirv_cross>)
     else()
-        message(WARNING "glslang/spirv-cross not found: D3D12 user shaders and effects will be unavailable. "
-                        "Run: vcpkg install glslang:x64-windows spirv-cross:x64-windows")
+        set(_sc_message "glslang/spirv-cross not found: D3D12 user shaders and effects (lighting, bloom, compute) would be "
+                        "unavailable. Run: vcpkg install glslang:x64-windows spirv-cross:x64-windows, pass the vcpkg toolchain file, "
+                        "and reconfigure with a fresh build directory, or enable SIMLIB_D3D12_BUILD_TRANSLATION.")
+        if(SIMLIB_D3D12_REQUIRE_TRANSLATION)
+            message(FATAL_ERROR "${_sc_message} (Or set -DSIMLIB_D3D12_REQUIRE_TRANSLATION=OFF to build without them.)")
+        else()
+            message(WARNING "${_sc_message}")
+        endif()
     endif()
     find_package(directx-dxc CONFIG QUIET)
     find_path(DXC_INCLUDE_DIR dxcapi.h HINTS "${_sc_prefix}/include" PATH_SUFFIXES directx-dxc)
@@ -557,6 +604,15 @@ target_link_libraries(exorbit PRIVATE simlib)
 target_include_directories(exorbit PRIVATE src/examples/common)
 add_executable(exlights3d src/examples/exlights3d/exlights3d.cpp)
 target_link_libraries(exlights3d PRIVATE simlib)
+
+add_executable(exprops src/examples/exprops/exprops.cpp)
+target_link_libraries(exprops PRIVATE simlib)
+add_executable(extown src/examples/extown/extown.cpp)
+target_link_libraries(extown PRIVATE simlib)
+add_executable(excontrols src/examples/excontrols/excontrols.cpp)
+target_link_libraries(excontrols PRIVATE simlib)
+add_executable(excockpit src/examples/excockpit/excockpit.cpp)
+target_link_libraries(excockpit PRIVATE simlib)
 add_executable(exhdr src/examples/exhdr/exhdr.cpp)
 target_link_libraries(exhdr PRIVATE simlib)
 add_executable(exocean src/examples/exocean/exocean.cpp)
@@ -592,7 +648,7 @@ target_link_libraries(excafluid PRIVATE simlib)
 
 add_executable(exdb src/examples/exdb/exdb.cpp)
 target_include_directories(exdb PRIVATE src/examples/exdb)
-target_link_libraries(exdb PRIVATE simlib SQLite::SQLite3)
+target_link_libraries(exdb PRIVATE simlib ${_SIMLIB_SQLITE_TARGET})
 
 add_executable(exshader src/examples/exshader/exshader.cpp)
 target_link_libraries(exshader PRIVATE simlib)
@@ -647,7 +703,6 @@ install(TARGETS simlib_convert RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 add_executable(exmodel3d src/examples/exmodel3d/exmodel3d.cpp)
 target_link_libraries(exmodel3d PRIVATE simlib)
-target_compile_definitions(exmodel3d PRIVATE SIMLIB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_executable(exclouds src/examples/exclouds/exclouds.cpp)
 target_link_libraries(exclouds PRIVATE simlib)
@@ -664,9 +719,6 @@ target_link_libraries(exfluid3d PRIVATE simlib)
 if(SIMLIB_RENDER_VULKAN)
     add_executable(ex3d_vulkan src/examples/ex3d_vulkan/ex3d_vulkan.cpp)
     target_include_directories(ex3d_vulkan PRIVATE src/engine)
-    target_compile_definitions(ex3d_vulkan PRIVATE
-        SIMLIB_SHADER_BINARY_DIR="${CMAKE_BINARY_DIR}/shaders"
-    )
     target_link_libraries(ex3d_vulkan PRIVATE simlib)
 endif()
 
@@ -727,6 +779,8 @@ target_link_libraries(exisometric PRIVATE simlib)
 
 add_executable(extilemap src/examples/extilemap/extilemap.cpp)
 target_link_libraries(extilemap PRIVATE simlib)
+add_executable(exxeno src/examples/exxeno/exxeno.cpp)
+target_link_libraries(exxeno PRIVATE simlib)
 add_executable(exnormalmap src/examples/exnormalmap/exnormalmap.cpp)
 target_link_libraries(exnormalmap PRIVATE simlib)
 add_executable(exnormalmap3d src/examples/exnormalmap3d/exnormalmap3d.cpp)
@@ -751,7 +805,11 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/examples/exreel/exreel.cpp)
         src/examples/exreel/scenes_2d.cpp
         src/examples/exreel/scenes_3d.cpp
         src/examples/exreel/scenes_fx.cpp
-        src/examples/exreel/scenes_sim.cpp)
+        src/examples/exreel/scenes_sim.cpp
+        src/examples/exreel/scenes_new2d.cpp
+        src/examples/exreel/scenes_new3d.cpp
+        src/examples/exreel/scenes_sea.cpp
+        src/examples/exreel/scenes_saturn.cpp)
     target_link_libraries(exreel PRIVATE simlib)
 endif()
 if(SIMLIB_GUI STREQUAL "imgui")
@@ -815,6 +873,15 @@ if(BUILD_TESTING)
     target_link_libraries(camera_collision_test PRIVATE simlib)
     target_compile_definitions(camera_collision_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
     add_test(NAME camera_collision COMMAND camera_collision_test)
+
+    add_executable(props3d_test tests/props3d_test.cpp)
+    target_link_libraries(props3d_test PRIVATE simlib)
+    target_compile_definitions(props3d_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME props3d COMMAND props3d_test)
+    add_executable(controls_test tests/controls_test.cpp)
+    target_link_libraries(controls_test PRIVATE simlib)
+    target_compile_definitions(controls_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME controls COMMAND controls_test)
 
     add_executable(tilemap_test tests/tilemap_test.cpp)
     target_link_libraries(tilemap_test PRIVATE simlib)
@@ -888,7 +955,7 @@ if(BUILD_TESTING)
 
     add_executable(rdb_test tests/rdb_test.cpp)
     target_include_directories(rdb_test PRIVATE src/examples/exdb)
-    target_link_libraries(rdb_test PRIVATE simlib lua sol2 SQLite::SQLite3)
+    target_link_libraries(rdb_test PRIVATE simlib lua sol2 ${_SIMLIB_SQLITE_TARGET})
     target_compile_definitions(rdb_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
     add_test(NAME rdb COMMAND rdb_test)
 
@@ -916,8 +983,11 @@ if(BUILD_TESTING)
     target_link_libraries(resource_test PRIVATE ZLIB::ZLIB)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/resource_test_fixture)
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/resource_test_fixture/stored.txt "stored entry\n")
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/resource_test_fixture/deflated.txt "deflated entry with enough repeated text to exercise compression\n")
+    # file(WRITE) would turn "\n" into CRLF on Windows, which the archive test does not expect.
+    file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/resource_test_fixture/stored.txt
+         CONTENT "stored entry\n" NEWLINE_STYLE UNIX)
+    file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/resource_test_fixture/deflated.txt
+         CONTENT "deflated entry with enough repeated text to exercise compression\n" NEWLINE_STYLE UNIX)
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/resource_test_fixture.zip
         COMMAND ${CMAKE_COMMAND} -E tar cf ${CMAKE_CURRENT_BINARY_DIR}/resource_test_fixture.zip
@@ -990,7 +1060,7 @@ if(BUILD_TESTING)
 
     # Tests rely on assert(); keep it active in Release builds, where NDEBUG would turn every check into a no-op.
     foreach(SIMLIB_TEST_TARGET
-            config_test isometric_test camera_collision_test tilemap_test normalmap_test normalmap3d_test lights3d_test localshadow_test hdr_test rdb_test
+            config_test isometric_test camera_collision_test props3d_test controls_test tilemap_test normalmap_test normalmap3d_test lights3d_test localshadow_test hdr_test rdb_test
             backend_selection_test event_test lua_canvas_test resource_test physics_test
             renderer_test voxel_test fluid3d_test flight_test terrain_test world_flavour_test net_test lobby_test pathfinder_test d3d12_renderer_test)
         if(TARGET ${SIMLIB_TEST_TARGET})
@@ -1047,6 +1117,36 @@ endif()
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/man/simlib.3"
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man3
 )
+
+# Lets projects that add simlib with add_subdirectory use simlib_add_package() too.
+set(SIMLIB_PACKAGE_SHADER_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/shaders;${CMAKE_CURRENT_BINARY_DIR}/shaders")
+set(SIMLIB_PACKAGE_LICENSE_DIRS "")
+if(_sc_prefix AND EXISTS "${_sc_prefix}/bin/dxcompiler.dll")
+    set(SIMLIB_PACKAGE_DXC_DIR "${_sc_prefix}/bin")
+endif()
+include(cmake/SimlibPackage.cmake)
+
+simlib_add_package(TARGET exxeno NAME exxeno-${CMAKE_SYSTEM_NAME} ASSETS assets)
+
+# simlib-demos-<system>.zip: every ex* example with the shared libraries, shaders and assets they need.
+get_directory_property(_simlib_all_targets BUILDSYSTEM_TARGETS)
+set(_simlib_example_targets "")
+foreach(_t IN LISTS _simlib_all_targets)
+    get_target_property(_type ${_t} TYPE)
+    if(_t MATCHES "^ex" AND _type STREQUAL "EXECUTABLE")
+        list(APPEND _simlib_example_targets ${_t})
+    endif()
+endforeach()
+list(SORT _simlib_example_targets)
+list(FIND _simlib_example_targets exxeno _simlib_primary_index)
+if(_simlib_primary_index GREATER -1)
+    list(REMOVE_ITEM _simlib_example_targets exxeno)
+    simlib_add_package(TARGET exxeno
+        NAME simlib-demos-${CMAKE_SYSTEM_NAME}
+        PACKAGE_TARGET simlib_demos_package
+        EXTRA_TARGETS ${_simlib_example_targets}
+        ASSETS assets)
+endif()
 
 set(SIMLIB_INSTALL_TARGETS simlib lua pugixml-static)
 if(SIMLIB_GUI STREQUAL "imgui")
@@ -1118,6 +1218,8 @@ configure_package_config_file(
 )
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/simlibConfig.cmake"
     cmake/SimlibBlender.cmake
+    cmake/SimlibPackage.cmake
+    cmake/SimlibPackageRun.cmake
     tools/blender/export_glb.py
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/simlib
 )

@@ -33,12 +33,15 @@ This reference details the public C++ API provided by `simlib`. Including `sl.h`
 22. [3D Flight & Orbital Dynamics](#3d-flight--orbital-dynamics-includeflighth)
 23. [Chunked-LOD Terrain](#chunked-lod-terrain-includeterrainh)
 24. [Atlases & Animated Sprites](#atlases--animated-sprites-includeatlash-includeanimated_spriteh)
-25. [Procedural Audio Synthesis](#procedural-audio-synthesis-includeaudio_synthh)
-26. [Video Playback](#video-playback-includevideoh)
-27. [Dear ImGui Integration](#dear-imgui-integration-includeguih)
-28. [Tile-Grid Pathfinding](#tile-grid-pathfinding-includepathfindingh)
-29. [Networking](#networking-includeneth)
-30. [Sandboxed Lua Scripting](#sandboxed-lua-scripting-includelua_runtimeh-includelua_canvash)
+25. [Ocean](#ocean-includeoceanh)
+25. [3D Props](#3d-props-includeprops3dh)
+26. [Control Panels](#control-panels-includecontrolsh)
+27. [Procedural Audio Synthesis](#procedural-audio-synthesis-includeaudio_synthh)
+28. [Video Playback](#video-playback-includevideoh)
+29. [Dear ImGui Integration](#dear-imgui-integration-includeguih)
+30. [Tile-Grid Pathfinding](#tile-grid-pathfinding-includepathfindingh)
+31. [Networking](#networking-includeneth)
+32. [Sandboxed Lua Scripting](#sandboxed-lua-scripting-includelua_runtimeh-includelua_canvash)
 
 ---
 
@@ -823,9 +826,9 @@ A `Surface3D` is an offscreen colour+depth target you draw 3D meshes into, then 
 - `create_surface_3d(w, h, samples = 1)` / `destroy_surface_3d(surface)`: `samples` requests MSAA (e.g. 4), clamped to GPU support; `surface_3d_samples(surface)` reports the count in use. Both 3D meshes and 2D elements (HUD, text, sprites) can be drawn into multisampled surfaces on OpenGL, Vulkan and Direct3D 12.
 - `begin_surface_3d(surface, camera)` / `end_surface_3d()`: bracket 3D drawing. Contents are undefined until `clear_surface_3d(colour)` is called.
 - `set_light_3d({direction, ambient, colour})`: the directional light (the sun).
-- `set_local_lights_3d(lights)` / `get_local_lights_3d()`: up to `max_local_lights_3d` (16) point and spot lights, each a `LocalLight3D` with `position`, `colour`, `intensity`, `range` (light is exactly zero beyond it), and for spots a `direction` plus `inner_angle`/`outer_angle` in degrees (an `outer_angle` of 0 makes a point light). They add to the sun on lit meshes (PBR and Lambert); unlit materials and `Material::terrain` draws ignore them. Positions use the same space as the camera.
-- Sun shadows: `create_shadow_map_3d(size)` / `destroy_shadow_map_3d(map)`, then each frame `begin_shadow_pass_3d(map, centre, radius)`, draw the casters with `draw_mesh` / `draw_mesh_instanced`, `end_shadow_pass_3d()`, and enable lookups with `set_shadow_map_3d(map, bias)` (`nullptr` turns them off). The map is an orthographic window of side `2 * radius` around `centre`, looking along the `Light3D` direction, snapped to texels so edges do not shimmer; lookups use a 5x5 soft filter. Only opaque lit meshes cast; terrain receives the shadows but casts none, and blended and unlit draws neither cast nor receive. Do the pass outside `begin_surface_3d()` / `end_surface_3d()`. Supported on OpenGL and Vulkan; Direct3D 12 has the same shader and constant-buffer changes but is untested on Linux.
-- Local light shadows: set `LocalLight3D::cast_shadow` on up to `max_local_shadow_lights_3d` (4) lights, create the maps with `create_local_shadow_map_3d(face_size, max_lights)` / `destroy_local_shadow_map_3d(map)`, call `set_local_lights_3d()` and then `render_local_shadows_3d(map, draw_casters)` outside `begin_surface_3d()`, and enable lookups with `set_local_shadow_map_3d(map)` (`nullptr` turns them off). `draw_casters` is called once per face: one for a spotlight, six (a cube) for a point light; it should `draw_mesh` every caster. Call it again whenever the lights or casters move, and keep the lights unchanged between the render and the draw calls. Lookups use a 4x4 soft filter and a bias in texels. Terrain (including the textured terrain shader) receives local lights, local shadows and sun shadows. Supported on OpenGL and Vulkan; on Direct3D 12 the lights work but local shadows are not implemented yet.
+- `set_local_lights_3d(lights)` / `get_local_lights_3d()`: up to `max_local_lights_3d` (16) point and spot lights, each a `LocalLight3D` with `position`, `colour`, `intensity`, `range` (light is exactly zero beyond it), and for spots a `direction` plus `inner_angle`/`outer_angle` in degrees (an `outer_angle` of 0 makes a point light). They add to the sun on lit meshes (PBR and Lambert); unlit materials ignore them, and terrain draws receive them. Positions use the same space as the camera. `get_light_3d()` and `get_local_lights_3d()` read the current state back; `bake_impostor()` uses these to restore your lights and shadow maps after it renders its views.
+- Sun shadows: `create_shadow_map_3d(size)` / `destroy_shadow_map_3d(map)`, then each frame `begin_shadow_pass_3d(map, centre, radius)`, draw the casters with `draw_mesh` / `draw_mesh_instanced`, `end_shadow_pass_3d()`, and enable lookups with `set_shadow_map_3d(map, bias)` (`nullptr` turns them off). `get_shadow_map_3d(&bias)` returns the current map (and optionally its bias) so you can save and restore it. The map is an orthographic window of side `2 * radius` around `centre`, looking along the `Light3D` direction, snapped to texels so edges do not shimmer; lookups use a 5x5 soft filter. Only opaque lit meshes cast; terrain receives the shadows but casts none, and blended and unlit draws neither cast nor receive. Do the pass outside `begin_surface_3d()` / `end_surface_3d()`. Supported on OpenGL and Vulkan; Direct3D 12 has the same shader and constant-buffer changes but is untested on Linux.
+- Local light shadows: set `LocalLight3D::cast_shadow` on up to `max_local_shadow_lights_3d` (4) lights, create the maps with `create_local_shadow_map_3d(face_size, max_lights)` / `destroy_local_shadow_map_3d(map)`, call `set_local_lights_3d()` and then `render_local_shadows_3d(map, draw_casters)` outside `begin_surface_3d()`, and enable lookups with `set_local_shadow_map_3d(map)` (`nullptr` turns them off). `get_local_shadow_map_3d()` returns the current map. `draw_casters` is called once per face: one for a spotlight, six (a cube) for a point light; it should `draw_mesh` every caster. Call it again whenever the lights or casters move, and keep the lights unchanged between the render and the draw calls. Lookups use a 4x4 soft filter and a bias in texels. Terrain (including the textured terrain shader) receives local lights, local shadows and sun shadows. Supported on OpenGL and Vulkan; on Direct3D 12 the lights work but local shadows are not implemented yet.
 - `create_cube_mesh`, `create_plane_mesh`, `create_sphere_mesh`, `create_mesh(vertices, indices)` / `destroy_mesh`
 - `draw_mesh(mesh, model_matrix, {tint, lit, texture, cull})`: `texture` is an optional `Bitmap*` sampled with the vertex `uv` (v = 0 is the image top) and multiplied into the colour. `cull` is a `CullMode`: `back` (default; clockwise-wound faces are culled), `front`, or `none`.
 - `draw_mesh_instanced(mesh, instances, material)`: draw many copies of a mesh in one hardware-instanced call. `instances` is a `std::vector<InstanceData3D>`, each a `model` matrix plus a `tint` that multiplies the vertex colours (rgb and alpha) on top of `Material::tint`. The view-projection is applied once and each model matrix in the vertex shader, with correct lighting for non-uniform scale and mirrored instances. This overload uploads the instances every call, so it suits instances that change each frame; calls in the same frame do not overwrite one another.
@@ -1206,7 +1209,10 @@ Multi-layer orthogonal or isometric tile maps built on `sl::Atlas`, with culled 
 
 ### Key Types
 - `sl::TileMap`: map size, tile size, `tilesets`, `layers` (`TileLayer`), `object_layers` (`ObjectLayer`) and an animation clock. Create with `create_tilemap()` or `load_tiled_map()` and free with `destroy_tilemap()` (which also frees bitmaps the loader created).
-- `sl::TileLayer`: row-major `cells`, plus `visible`, `offset_x/y` and `parallax_x/y`. A cell is a GID (0 = empty) OR-ed with `tile_flip_horizontal`, `tile_flip_vertical` and/or `tile_flip_diagonal`; mask with `tile_id_mask`.
+- `sl::TileLayer`: row-major `cells`, plus `visible`, `offset_x/y`, `parallax_x/y`, `opacity` (0-1) and `tint` (a colour multiplied into every tile; Tiled's tint colour). A cell is a GID (0 = empty) OR-ed with `tile_flip_horizontal`, `tile_flip_vertical` and/or `tile_flip_diagonal`; mask with `tile_id_mask`.
+- `sl::ObjectLayer` / `sl::TileObject`: objects with `x`, `y`, `width`, `height`, `rotation`, `visible`, properties and an optional `gid`. Objects with a `gid` are tile objects and are drawn by `draw_tilemap()` (anchored bottom-left, rotated about that point, as in Tiled).
+- `sl::ImageLayer`: a picture layer (`bitmap`, `offset_x/y`, `parallax_x/y`, `repeat_x/y`, `opacity`, `tint`) loaded from Tiled image layers; the map owns the bitmap.
+- `after_layer` on `ObjectLayer`, `ImageLayer` and `TileDecal` says which tile layer they sit directly above (-1: below all), so stacked content interleaves correctly with tile layers. A cell "made of several layers" is simply several stacked tile layers (Tiled has no multi-part tile); use `draw_tilemap(..., first_layer, last_layer)` to draw part of the stack.
 - `sl::TileSet` / `sl::TileInfo`: an atlas with its `first_gid`, and per-tile `solid`, `properties` and `animation` frames.
 
 ### Functions
@@ -1214,13 +1220,14 @@ Multi-layer orthogonal or isometric tile maps built on `sl::Atlas`, with culled 
 - `tilemap_set_solid()`, `tilemap_tile_info()`, `tilemap_tile_property()`, `tilemap_is_solid()`, `tilemap_rect_blocked()`: collision queries (out of bounds counts as solid on finite maps, and as empty on infinite maps).
 - `tilemap_world_to_tile()`, `tilemap_tile_to_world()`: coordinate conversion.
 - `create_hex_tilemap(width, height, tile_w, tile_h, side_length, stagger_y, stagger_odd)`, `create_infinite_tilemap(tile_w, tile_h)`, `tilemap_layer_bounds()`: hexagonal maps and sparse, chunked infinite maps (negative coordinates allowed, grown on `tilemap_set`). `load_tiled_map()` reads Tiled hexagonal maps and infinite maps (`chunks`); infinite isometric maps are rejected. Hex `tilemap_world_to_tile()` picks the nearest hex centre.
-- `update_tilemap(map, dt_seconds)`: advances tile animations.
+- `update_tilemap(map, dt_seconds)`: advances tile animations and ages (and expires) decals.
+- `tilemap_add_decal(map, after_layer, gid, x, y, rotation = 0, scale = 1, tint = White, lifetime = 0, fade = 0.5)`: stamps a tile at a free pixel position, rotated and scaled, drawn directly above tile layer `after_layer` (splats, scorch marks, footprints). `lifetime` 0 keeps it forever; otherwise it fades over its last `fade` seconds. `TileMap::max_decals` (default 512) caps the count, discarding the oldest. `tilemap_clear_decals(map)` removes them all. Decal positions are camera-relative map pixels, so they suit orthogonal maps.
 - `draw_tilemap(map, camera_x, camera_y, view_width = 0, view_height = 0, first_layer = 0, last_layer = -1)`: draws visible cells only. For isometric maps the camera is the screen offset of cell (0, 0).
-- `load_tiled_map(path)`: loads Tiled JSON (`.tmj`/`.json`) or native XML (`.tmx`) maps with embedded or external `.tsj`/`.tsx` tilesets (including image-collection tilesets, kept per tile in `TileSet::images`), CSV or base64 layer data (uncompressed, zlib or gzip, also inside infinite-map chunks), group layers, flips, tile properties (a boolean `solid` property sets `TileInfo::solid`), animations and object layers. Zstd-compressed layers and infinite isometric maps are rejected with an error.
+- `load_tiled_map(path)`: loads Tiled JSON (`.tmj`/`.json`) or native XML (`.tmx`) maps with embedded or external `.tsj`/`.tsx` tilesets (including image-collection tilesets, kept per tile in `TileSet::images`), CSV or base64 layer data (uncompressed, zlib or gzip, also inside infinite-map chunks), group layers (a group's visibility, opacity, offset, parallax and tint are inherited by its children), layer opacity and tint colour, image layers, tile objects, flips, tile properties (a boolean `solid` property sets `TileInfo::solid`), animations and object layers. Zstd-compressed layers and infinite isometric maps are rejected with an error.
 - `tilemap_find_object(map, name)`: look up a spawn point or trigger from an object layer.
-- `draw_sprite_region_flipped()` (in `draw.h`) draws a bitmap region with horizontal, vertical and diagonal flips.
+- `draw_sprite_region_flipped()` (in `draw.h`) draws a bitmap region with horizontal, vertical and diagonal flips and an optional tint.
 
-See [`extilemap`](../src/examples/extilemap/extilemap.cpp) for a scrolling map with collision and animation.
+See [`extilemap`](../src/examples/extilemap/extilemap.cpp) for a scrolling map with collision and animation, and [`exxeno`](../src/examples/exxeno/exxeno.cpp) for lit tile-map decals (acid splats).
 
 ---
 
@@ -1325,12 +1332,83 @@ clutter.draw(origin);
 
 ---
 
+## Ocean ([include/ocean.h](../include/ocean.h))
+
+A Gerstner-wave sea drawn as one polar-grid mesh that follows the eye: dense close in, sparse towards the horizon, with short waves fading out with distance.
+
+```cpp
+sl::Ocean sea;                       // default: six wave trains at sea level 0
+sea.set_sea_level(38.0);
+sea.set_terrain(&terrain);           // optional: shoreline
+sea.set_sea_state(0.5);              // 0 calm .. 1 storm
+// each frame, after terrain->draw:
+sea.update(eye.x, eye.z, eye, time); // eye = the same double-precision origin the terrain uses
+sea.draw();
+double h = sea.height_at(x, z, time);
+```
+
+- `OceanConfig` sets the wave trains (empty means the six defaults), `sea_level`, mesh `rings`/`segments`/`inner_radius`/`outer_radius`, `deep_colour`/`shallow_colour`, `shallow_depth`, `clear_depth`, `foam_depth` and `shore_range`.
+- `surface_at(x, z, time)` returns height, normal and foam; `swell_height()` is the current significant wave height.
+- With a terrain set, waves shrink as the water shoals, the colour shifts to the shallow tint, the surface fades to clear water over `clear_depth` and surging foam forms at the shoreline. The terrain is only sampled within `shore_range` of the eye. Draw the terrain first; it shows through the water by depth testing.
+- The mesh is eye-relative, so draw it with the identity matrix. `default_material()` is a glossy double-sided PBR material (alpha blended when a terrain is set).
+
+---
+
+## 3D Props ([include/props3d.h](../include/props3d.h))
+
+A library of low-poly scenery parts built in code, with no asset files. Every builder returns a `MeshData` (vertex colours carry the shading and baked windows), so parts draw with a plain `Material`, bake with `bake_instances()` and cast ordinary shadows.
+
+```cpp
+sl::MeshData house = sl::make_house_data(6, 5, 3, {214, 196, 160, 255}, {150, 64, 48, 255}, 2);
+std::vector<sl::Instance3D> spots = {{{-13, 0, 0}, 1.5708f}, {{13, 0, 8}, -1.5708f}};
+sl::Mesh *houses = sl::bake_instances(house, spots);   // one mesh, one draw
+sl::draw_mesh(houses, sl::model_matrix({0, 0, 0}, {0, 0, 0}));
+```
+
+- Conventions: metres, +Y up, the base on `y = 0`, centred on x and z, and the front facing +Z. Fence, wall and container run along X; roads run along Z. `seed` varies colours, lit windows and small details deterministically. Parts are static.
+- Buildings: `make_house_data`, `make_office_data`, `make_skyscraper_data`, `make_hangar_data`.
+- Structures: `make_wall_data`, `make_fence_data`, `make_water_tower_data`, `make_radar_data`, `make_domed_radar_data`, `make_control_tower_data`, `make_street_lamp_data` (the lamp head glows at `(0, height, 0.9)`, the place for a local light), `make_road_data`.
+- Small props: `make_barrel_data`, `make_crate_data`, `make_container_data`, `make_tank_data`.
+- Nature: `make_tree_data`, `make_conifer_data`, `make_bush_data`, `make_rock_data`, `make_rock_cluster_data`.
+- Vehicles: `make_car_data`, `make_spaceship_data`, `make_aeroplane_data`.
+- Rockets and spacecraft (Apollo era, real Saturn V / Skylab sizes in metres): rocket and station parts are bodies of revolution about Y that start on `y = 0` and end at `y = length`, so they stack by translating each part up by the heights below it (`transform_mesh_data` with a translation, or a baked `Instance3D`). Rocket parts: `make_rocket_stage_data` (a stage or short ring such as an instrument unit), `make_rocket_engines_data` (1, 4 or 5 bells under a stage), `make_rocket_adapter_data` (conical interstage), `make_rocket_fins_data`, `make_payload_fairing_data`, `make_launch_escape_tower_data`, `make_apollo_csm_data`, plus the ground parts `make_launch_tower_data` and `make_launch_pad_data`. Spacecraft parts: `make_station_module_data`, `make_docking_adapter_data`, `make_solar_array_data` (hinged on `x = 0`, spreads along +X), `make_solar_windmill_data`, `make_antenna_dish_data`, `make_satellite_bus_data`. Finished assemblies built from those parts: `make_saturn_v_data` (about 115 m), `make_skylab_data` (about 38 m) and `make_satellite_data`.
+- Control parts (see [Control Panels](#control-panels-includecontrolsh)): `make_panel_data`, `make_dial_data`, `make_needle_data`, `make_knob_base_data`/`make_knob_data`, `make_toggle_base_data`/`make_toggle_lever_data`, `make_button_base_data`/`make_button_cap_data`, `make_lamp_bezel_data`/`make_lamp_lens_data`, `make_slider_track_data`/`make_slider_cap_data`, `make_meter_housing_data`/`make_meter_segment_data`, and the assemblies `make_cockpit_data` and `make_control_cabinet_data`. These face +Z with the panel face on `z = 0`. `transform_mesh_data(data, matrix)` applies a matrix to a `MeshData`.
+- `Instance3D::yaw` turns a part's front to `(sin yaw, cos yaw)`: 0 faces +Z, pi/2 faces +X, pi faces -Z.
+- A full list of every part with its arguments and how to instantiate it is in the [props catalogue](props.md).
+- Examples: `src/examples/exprops` (gallery), `src/examples/extown` (town and airfield). Lesson: [Building a scene from parts](tutorial/3d-06-building-a-scene-from-parts.md).
+
+---
+
 ## Atlases & Animated Sprites ([include/atlas.h](../include/atlas.h), [include/animated_sprite.h](../include/animated_sprite.h))
 
 - `create_atlas(bitmap, tile_w, tile_h, spacing = 0, margin = 0)` / `load_atlas_from_file(path, tile_w, tile_h)`: slice a sprite sheet into numbered tiles. `atlas_tile_rect` returns a tile's pixel rectangle.
 - `atlas_blit`, `atlas_stretch_blit`, `atlas_rotate_sprite` and `atlas_rotate_stretch_sprite` draw tiles to a bitmap, with optional pivots.
 - `AnimatedSprite` plays a run of atlas tiles with a per-frame duration, optional one-shot playback and rotation. Create one with `create_animated_sprite(atlas, start_tile, frames, x, y, w, h, duration)` and draw it with `draw_animated_sprite` or `draw_rotated_animated_sprite`.
 - A sprite manager owns many sprites: `add_animated_sprite`, `update`, `draw_sprites`, `set_sprite_position`, `set_sprite_rotation`, `set_sprite_tiles`, `toggle_pause` and `remove_animated_sprite`. See `src/examples/exanimsprite`.
+
+---
+
+## Control Panels ([include/controls.h](../include/controls.h))
+
+Dials, knobs, switches, buttons, lamps, sliders and LED level meters, for cockpits and factory panels. A `ControlPanel` holds the layout and state and handles the mouse; it has no idea how it is drawn, so one panel works as a flat 2D widget or as geometry in a 3D scene.
+
+```cpp
+sl::ControlPanel panel(420, 300);                       // panel units, origin top-left, y down
+int thr = panel.add_slider(280, 120, 140, 0, 1, 0, true, "THR");
+int spd = panel.add_dial(110, 120, 160, 0, 100, "SPEED");
+panel.update(dt, sl::control_pointer_2d(px, py, 1.0f, mouse_x, mouse_y, down));
+panel.set_value(spd, 100.0f * panel.value(thr));
+sl::draw_control_panel(sl::screen, panel, px, py);
+```
+
+- Controls: `add_dial`, `add_knob`, `add_toggle`, `add_button` (momentary, or latching with the last argument), `add_lamp` (optionally blinking), `add_slider`, `add_meter`. Each returns an id; `find(label)` finds one by its unique label. Positions are centres; `width` is the diameter for round controls.
+- State: `value(id)`, `on(id)`, `set_value(id, v)` and `set_on(id, on)` (clamped; do not call `on_change`), `control(id)`, `glow(id)` (0 to 1 lamp brightness).
+- Input: `update(dt, Pointer{x, y, down})` does hit testing, press and release edges and drag capture. Knobs are dragged up/down or left/right, sliders jump to the pointer, toggles and latching buttons flip on press, momentary buttons are on while held. `on_change(id, value)` fires only for user changes. `active()` is the control being dragged (or -1).
+- Display: dials and meters ease toward their value (`set_smoothing(rate)`, default 10, 0 snaps); lamps, toggles and buttons ease quickly. A blinking lamp alternates between bright and dim at about 2.5 Hz.
+- 2D: `draw_control_panel(target, panel, x, y, scale, font)` draws with shapes and default-font labels, with halos around lit lamps and segments. Draw into a render target and run `Bloom` for glow. `control_pointer_2d(panel_x, panel_y, scale, screen_x, screen_y, down)` converts mouse coordinates.
+- 3D: `ControlPanelView3D(panel, unit = 0.002)` builds the meshes from the `props3d.h` control parts; one panel unit is `unit` metres. `draw(panel, pose)` draws it centred on `pose` with +Z out, with emissive lamps, meter segments and latched buttons (values above 1 bloom through `Hdr`). `lights(panel, pose, intensity, range)` returns a `LocalLight3D` per lit lamp. `pick(camera, w, h, mouse_x, mouse_y, pose, &pointer)` maps the mouse onto the panel; it returns false only if the ray misses the panel's plane. `screen_ray(camera, w, h, x, y)` in [scene3d.h](../include/scene3d.h) is the underlying ray.
+- Assemblies: `make_cockpit()` and `make_control_cabinet()` return a `ControlAssembly` with `panel`, `body` (`MeshData`), `panel_pose` and `unit`. `make_cockpit_panel()` and `make_cabinet_panel()` give just the layouts.
+- Examples: `src/examples/excontrols` (2D), `src/examples/excockpit` (3D). Lessons: [Control panels](tutorial/2d-05-control-panels.md), [A clickable 3D panel](tutorial/3d-07-a-clickable-3d-panel.md).
 
 ---
 

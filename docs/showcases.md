@@ -45,12 +45,15 @@ Then try:
 
 - [`execs`](../src/examples/execs/execs.cpp) for interactive entity-component systems, archetypes, and parallel iteration ([guide](ecs.md)).
 - [`exisometric`](../src/examples/exisometric/exisometric.cpp) for isometric rendering, elevation, mouse picking, and lighting.
+- [`extown`](../src/examples/extown/extown.cpp) for a 55k-triangle town and airfield built from `props3d.h` parts with baked instances, shadows and night lamps.
+- [`excontrols`](../src/examples/excontrols/excontrols.cpp) and [`excockpit`](../src/examples/excockpit/excockpit.cpp) for mouse-operated cockpit and factory control panels with glowing LEDs, in 2D and as 3D geometry.
+- [`exxeno`](../src/examples/exxeno/exxeno.cpp) for a lit 2D shooter combining tile-map decals, `LightingPass`, particles and synthesised audio.
 - [`extilemap`](../src/examples/extilemap/extilemap.cpp) and [`exphysics`](../src/examples/exphysics/exphysics.cpp) for tile maps and Box2D as focused building blocks.
 - [`exaudio`](../src/examples/exaudio/exaudio.cpp), [`exparticles`](../src/examples/exparticles/exparticles.cpp), and [`exlighting`](../src/examples/exlighting/exlighting.cpp) for sound, particles, and dynamic 2D light/shadow systems.
 
 ## Terrain, Flight, and Space
 
-For spherical terrain and a larger set of rendering controls, try [`exterrain`](../src/examples/exterrain/exterrain.cpp) with its `planet` argument. See the [terrain](terrain.md) and [world flavour](world_flavour.md) guides for feature details.
+Flat terrain also carries an `sl::Ocean` sea with shoaling waves and shoreline foam (`O` key). For spherical terrain and a larger set of rendering controls, try [`exterrain`](../src/examples/exterrain/exterrain.cpp) with its `planet` argument. See the [terrain](terrain.md) and [world flavour](world_flavour.md) guides for feature details.
 
 Continue with [`exflight`](../src/examples/exflight/exflight.cpp) for aircraft lift, stalls, control surfaces, and landing gear, then [`exorbit`](../src/examples/exorbit/exorbit.cpp) for spacecraft, RCS, orbital prediction, and time warp. Shared APIs and conventions are documented in [Flight & Orbital Dynamics](flight.md).
 

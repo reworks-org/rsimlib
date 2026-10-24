@@ -54,6 +54,8 @@ namespace sl::detail
         constexpr std::uint32_t max_program_samplers_sm5 = 16;
         constexpr std::uint32_t max_program_samplers_sm6 = max_texture_units;
         // Shader-visible sampler descriptors after the texture range, rewritten for each draw or dispatch.
+        // Shader-visible sampler heaps are capped at 2048 descriptors, so textures share a small table of deduplicated samplers.
+        constexpr std::uint32_t persistent_sampler_capacity = 128;
         constexpr std::uint32_t transient_sampler_capacity = 1024;
         constexpr std::uint32_t max_image_units = translated_max_images;
 
@@ -61,6 +63,7 @@ namespace sl::detail
         {
             ID3D12Resource *resource = nullptr;
             std::uint32_t descriptor = 0;
+            std::uint32_t sampler = 0;
             D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COPY_DEST;
         };
 
@@ -135,6 +138,8 @@ namespace sl::detail
             int sampler_parameter_base = -1;
             std::array<ID3D12PipelineState *, pipeline_set_size * sample_slot_count> pipelines{};
             ID3D12PipelineState *compute_pipeline = nullptr;
+            // Set once the DXC-built shaders were rejected at pipeline creation and fxc (SM 5.1) replaced them.
+            bool fxc_fallback = false;
         };
 
         D3D12_BLEND_DESC blend_description(std::size_t variant)
@@ -160,11 +165,11 @@ namespace sl::detail
         }
 
         bool compile_shader(const std::string &source, const char *entry, const char *target,
-                            ID3DBlob **blob, std::string &error)
+                            ID3DBlob **blob, std::string &error, UINT flags = 0)
         {
             ID3DBlob *messages = nullptr;
             const HRESULT result = D3DCompile(source.data(), source.size(), nullptr, nullptr, nullptr,
-                                              entry, target, D3DCOMPILE_ENABLE_STRICTNESS, 0, blob, &messages);
+                                              entry, target, D3DCOMPILE_ENABLE_STRICTNESS | flags, 0, blob, &messages);
             if (FAILED(result))
             {
                 error = messages ? static_cast<const char *>(messages->GetBufferPointer())
@@ -248,16 +253,15 @@ namespace sl::detail
         private:
             void load(ID3D12Device *device)
             {
-                // Highest shader model the device supports, capped at 6.6.
+                // Shader model 6.0 is enough for the translated shaders and the most widely supported DXIL model.
+                // Higher models gain nothing here, and shaders compiled for 6.6 are rejected with E_INVALIDARG
+                // when creating pipeline states on some drivers and runtimes.
                 struct Model
                 {
                     D3D_SHADER_MODEL model;
                     const wchar_t *suffix;
                 };
-                const Model models[] = {{D3D_SHADER_MODEL_6_6, L"6_6"}, {D3D_SHADER_MODEL_6_5, L"6_5"},
-                                        {D3D_SHADER_MODEL_6_4, L"6_4"}, {D3D_SHADER_MODEL_6_3, L"6_3"},
-                                        {D3D_SHADER_MODEL_6_2, L"6_2"}, {D3D_SHADER_MODEL_6_1, L"6_1"},
-                                        {D3D_SHADER_MODEL_6_0, L"6_0"}};
+                const Model models[] = {{D3D_SHADER_MODEL_6_0, L"6_0"}};
                 for (const Model &candidate : models)
                 {
                     D3D12_FEATURE_DATA_SHADER_MODEL support{candidate.model};
@@ -308,6 +312,13 @@ namespace sl::detail
         {
             if (dxc_available(device))
                 return dxc_compile(source, stage, blob, error);
+            return compile_shader(source, "main", (std::string(stage) + "_5_1").c_str(), blob, error);
+        }
+
+        // Drivers sometimes reject DXC-built DXIL at pipeline creation; fxc's shader model 5.1 is the safe fallback.
+        bool compile_program_shader_fxc(const std::string &source, const char *stage, ID3DBlob **blob,
+                                        std::string &error)
+        {
             return compile_shader(source, "main", (std::string(stage) + "_5_1").c_str(), blob, error);
         }
 
@@ -538,6 +549,7 @@ namespace sl::detail
                 if (depth_stencil_heap_)
                     depth_stencil_heap_->Release();
                 sampler_heap_ = nullptr;
+                sampler_slots_.clear();
                 srv_heap_ = nullptr;
                 render_target_heap_ = nullptr;
                 depth_stencil_heap_ = nullptr;
@@ -639,20 +651,31 @@ namespace sl::detail
                 context_.device()->CreateShaderResourceView(
                     resource.resource, &srv_desc, cpu_descriptor(srv_heap_, srv_descriptor_size_, descriptor));
 
-                D3D12_SAMPLER_DESC sampler_desc{};
                 const bool use_anisotropy = description.anisotropy > 1.0f && description.filter == TextureFilter::linear;
-                sampler_desc.Filter = use_anisotropy
-                                          ? D3D12_FILTER_ANISOTROPIC
-                                          : description.filter == TextureFilter::linear
-                                                ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
-                                                : D3D12_FILTER_MIN_MAG_MIP_POINT;
-                sampler_desc.MaxAnisotropy = use_anisotropy ? static_cast<UINT>(std::clamp(description.anisotropy, 1.0f, 16.0f)) : 1u;
-                sampler_desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-                sampler_desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-                sampler_desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-                sampler_desc.MaxLOD = D3D12_FLOAT32_MAX;
-                context_.device()->CreateSampler(
-                    &sampler_desc, cpu_descriptor(sampler_heap_, sampler_descriptor_size_, descriptor));
+                const UINT max_anisotropy = use_anisotropy ? static_cast<UINT>(std::clamp(description.anisotropy, 1.0f, 16.0f)) : 1u;
+                const std::uint32_t sampler_key = (use_anisotropy ? max_anisotropy : 0u) * 2u +
+                                                  (description.filter == TextureFilter::linear ? 1u : 0u);
+                const auto known = sampler_slots_.find(sampler_key);
+                if (known != sampler_slots_.end())
+                    resource.sampler = known->second;
+                else if (sampler_slots_.size() < persistent_sampler_capacity)
+                {
+                    D3D12_SAMPLER_DESC sampler_desc{};
+                    sampler_desc.Filter = use_anisotropy
+                                              ? D3D12_FILTER_ANISOTROPIC
+                                              : description.filter == TextureFilter::linear
+                                                    ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
+                                                    : D3D12_FILTER_MIN_MAG_MIP_POINT;
+                    sampler_desc.MaxAnisotropy = max_anisotropy;
+                    sampler_desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+                    sampler_desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+                    sampler_desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+                    sampler_desc.MaxLOD = D3D12_FLOAT32_MAX;
+                    resource.sampler = static_cast<std::uint32_t>(sampler_slots_.size());
+                    context_.device()->CreateSampler(
+                        &sampler_desc, cpu_descriptor(sampler_heap_, sampler_descriptor_size_, resource.sampler));
+                    sampler_slots_.emplace(sampler_key, resource.sampler);
+                }
 
                 texture = next_texture_++;
                 if (texture == 0)
@@ -673,9 +696,12 @@ namespace sl::detail
                     return false;
                 if (context_.frame_open())
                 {
+                    // Submit what has been recorded so far without presenting, so earlier draws
+                    // in this frame are not lost, then restore the target state on the fresh list.
                     flush_2d();
-                    context_.present(vsync_enabled_);
-                    release_retired_textures();
+                    if (!context_.execute_with(nullptr, 0))
+                        return false;
+                    rebind_frame_targets();
                 }
                 if (!context_.wait_idle())
                     return false;
@@ -1281,8 +1307,10 @@ namespace sl::detail
                                   const D3D12InstanceBuffer *instances, std::size_t instance_count)
             {
                 const auto mesh = meshes_.find(handle);
+                // While draws are queued the target is already bound; re-binding would flush the queue every draw.
+                const bool frame_ready = queued_draws_.empty() ? ensure_frame() : context_.frame_open();
                 if (mesh == meshes_.end() || active_render_target_ == 0 ||
-                    !initialise_2d() || !initialise_mesh_pipeline() || !ensure_frame())
+                    !initialise_2d() || !initialise_mesh_pipeline() || !frame_ready)
                     return false;
                 const auto target = render_targets_.find(active_render_target_);
                 if (target == render_targets_.end() || !target->second.depth)
@@ -1314,22 +1342,37 @@ namespace sl::detail
                     shadow_map = textures_.find(white_texture_);
                 if (shadow_map == textures_.end())
                     return false;
-                // After the PBR block: the eye position (w = local light count), the shadow parameters and matrix, then
-                // four float4s per local light (local light shadows are not implemented on Direct3D 12).
-                float pbr_constants[44 + 16 * 16];
-                std::copy(std::begin(params.pbr), std::end(params.pbr), pbr_constants);
-                std::copy(std::begin(params.emissive), std::end(params.emissive), pbr_constants + 4);
-                std::copy(std::begin(params.camera_right), std::end(params.camera_right), pbr_constants + 8);
-                std::copy(std::begin(params.camera_up), std::end(params.camera_up), pbr_constants + 12);
-                std::copy(std::begin(params.camera_forward), std::end(params.camera_forward), pbr_constants + 16);
-                std::copy(std::begin(params.camera_position), std::end(params.camera_position), pbr_constants + 20);
+                auto local_shadow_map =
+                    textures_.find(params.local_shadow_texture != 0 ? params.local_shadow_texture : white_texture_);
+                if (local_shadow_map == textures_.end() ||
+                    local_shadow_map->second.state != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+                    local_shadow_map = textures_.find(white_texture_);
+                if (local_shadow_map == textures_.end())
+                    return false;
+                // The eye position, shadow parameters and matrix are followed by four float4s per light and then
+                // the local-shadow matrices starting at local_shadow_matrix_base.
+                std::array<float, 44 + local_light_vec4s * 4> pbr_constants{};
+                std::copy(std::begin(params.pbr), std::end(params.pbr), pbr_constants.begin());
+                std::copy(std::begin(params.emissive), std::end(params.emissive), pbr_constants.begin() + 4);
+                std::copy(std::begin(params.camera_right), std::end(params.camera_right), pbr_constants.begin() + 8);
+                std::copy(std::begin(params.camera_up), std::end(params.camera_up), pbr_constants.begin() + 12);
+                std::copy(std::begin(params.camera_forward), std::end(params.camera_forward), pbr_constants.begin() + 16);
+                std::copy(std::begin(params.camera_position), std::end(params.camera_position), pbr_constants.begin() + 20);
                 const std::size_t local_lights =
                     static_cast<std::size_t>(std::clamp(params.camera_position[3], 0.0f, 16.0f));
-                std::copy(std::begin(params.shadow), std::end(params.shadow), pbr_constants + 24);
-                std::copy(std::begin(params.shadow_matrix), std::end(params.shadow_matrix), pbr_constants + 28);
-                std::copy(&params.local_lights[0][0], &params.local_lights[0][0] + 16 * local_lights, pbr_constants + 44);
+                std::copy(std::begin(params.shadow), std::end(params.shadow), pbr_constants.begin() + 24);
+                std::copy(std::begin(params.shadow_matrix), std::end(params.shadow_matrix), pbr_constants.begin() + 28);
+                const std::size_t shadow_slots =
+                    static_cast<std::size_t>(std::clamp(params.shadow[3], 0.0f,
+                                                        static_cast<float>(local_shadow_slots)));
+                const std::size_t local_vec4s =
+                    (std::max)(local_lights * 4,
+                               params.local_shadow_texture != 0
+                                   ? static_cast<std::size_t>(local_shadow_matrix_base) + shadow_slots * 24
+                                   : 0);
+                std::memcpy(pbr_constants.data() + 44, params.local_lights, local_vec4s * sizeof(float) * 4);
                 const D3D12_GPU_VIRTUAL_ADDRESS pbr_address =
-                    allocate_constants(pbr_constants, sizeof(float) * (44 + 16 * local_lights));
+                    allocate_constants(pbr_constants.data(), sizeof(float) * (44 + local_vec4s * 4));
                 if (pbr_address == 0)
                     return false;
 
@@ -1353,12 +1396,14 @@ namespace sl::detail
                 QueuedMeshDraw draw;
                 draw.constants = constants;
                 draw.texture_srv = gpu_descriptor(srv_heap_, srv_descriptor_size_, texture->second.descriptor);
-                draw.texture_sampler = gpu_descriptor(sampler_heap_, sampler_descriptor_size_, texture->second.descriptor);
+                draw.texture_sampler = gpu_descriptor(sampler_heap_, sampler_descriptor_size_, texture->second.sampler);
                 draw.normal_srv = gpu_descriptor(srv_heap_, srv_descriptor_size_, normal_map->second.descriptor);
-                draw.normal_sampler = gpu_descriptor(sampler_heap_, sampler_descriptor_size_, normal_map->second.descriptor);
+                draw.normal_sampler = gpu_descriptor(sampler_heap_, sampler_descriptor_size_, normal_map->second.sampler);
                 draw.material_srv = gpu_descriptor(srv_heap_, srv_descriptor_size_, material_map->second.descriptor);
-                draw.material_sampler = gpu_descriptor(sampler_heap_, sampler_descriptor_size_, material_map->second.descriptor);
+                draw.material_sampler = gpu_descriptor(sampler_heap_, sampler_descriptor_size_, material_map->second.sampler);
                 draw.shadow_srv = gpu_descriptor(srv_heap_, srv_descriptor_size_, shadow_map->second.descriptor);
+                draw.local_shadow_srv =
+                    gpu_descriptor(srv_heap_, srv_descriptor_size_, local_shadow_map->second.descriptor);
                 draw.pbr_address = pbr_address;
                 draw.pipeline = mesh_pipeline;
                 draw.views[0] = mesh->second.vertex_view;
@@ -1387,7 +1432,7 @@ namespace sl::detail
             {
                 std::array<float, 48> constants;
                 D3D12_GPU_DESCRIPTOR_HANDLE texture_srv, texture_sampler, normal_srv, normal_sampler,
-                    material_srv, material_sampler, shadow_srv;
+                    material_srv, material_sampler, shadow_srv, local_shadow_srv;
                 D3D12_GPU_VIRTUAL_ADDRESS pbr_address;
                 ID3D12PipelineState *pipeline;
                 D3D12_VERTEX_BUFFER_VIEW views[2];
@@ -1418,6 +1463,7 @@ namespace sl::detail
                 commands->SetGraphicsRootDescriptorTable(6, draw.material_sampler);
                 commands->SetGraphicsRootConstantBufferView(7, draw.pbr_address);
                 commands->SetGraphicsRootDescriptorTable(8, draw.shadow_srv);
+                commands->SetGraphicsRootDescriptorTable(9, draw.local_shadow_srv);
                 commands->SetPipelineState(draw.pipeline);
                 commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                 commands->IASetVertexBuffers(0, draw.view_count, draw.views);
@@ -1511,8 +1557,8 @@ namespace sl::detail
                                             {
                                                 ID3D12GraphicsCommandList *list = first_worker[chunk].list;
                                                 bind_render_target_state(target->second, width, height, list);
-                                                const std::size_t begin = std::min(count, chunk * per_chunk);
-                                                const std::size_t end = std::min(count, begin + per_chunk);
+                                                const std::size_t begin = (std::min)(count, chunk * per_chunk);
+                                                const std::size_t end = (std::min)(count, begin + per_chunk);
                                                 for (std::size_t i = begin; i < end; ++i)
                                                     record_mesh_draw(list, draws[i]);
                                                 list->Close();
@@ -1659,9 +1705,28 @@ namespace sl::detail
                 D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
                 desc.pRootSignature = program.root_signature;
                 desc.CS = {program.compute_blob->GetBufferPointer(), program.compute_blob->GetBufferSize()};
-                if (FAILED(context_.device()->CreateComputePipelineState(&desc, IID_PPV_ARGS(&program.compute_pipeline))))
+                HRESULT pipeline_result =
+                    context_.device()->CreateComputePipelineState(&desc, IID_PPV_ARGS(&program.compute_pipeline));
+                if (FAILED(pipeline_result) && dxc_available(context_.device()) &&
+                    program.samplers.size() <= max_program_samplers_sm5)
                 {
-                    error = "Unable to create the D3D12 compute pipeline state.";
+                    ID3DBlob *fallback = nullptr;
+                    std::string fallback_error;
+                    if (compile_program_shader_fxc(program.pixel.hlsl, "cs", &fallback, fallback_error))
+                    {
+                        program.compute_blob->Release();
+                        program.compute_blob = fallback;
+                        program.fxc_fallback = true;
+                        desc.CS = {fallback->GetBufferPointer(), fallback->GetBufferSize()};
+                        pipeline_result = context_.device()->CreateComputePipelineState(
+                            &desc, IID_PPV_ARGS(&program.compute_pipeline));
+                    }
+                }
+                if (FAILED(pipeline_result))
+                {
+                    char code[48];
+                    std::snprintf(code, sizeof(code), " (HRESULT 0x%08lX)", static_cast<unsigned long>(pipeline_result));
+                    error = std::string("Unable to create the D3D12 compute pipeline state.") + code;
                     release_program(program);
                     return false;
                 }
@@ -1824,22 +1889,13 @@ namespace sl::detail
                     ranges[index].BaseShaderRegister = index / 2;
                     ranges[index].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
                 }
-                // Parameter 8: the sun shadow map SRV t3 (read with Load, so it has no sampler).
-                D3D12_DESCRIPTOR_RANGE shadow_range{};
-                shadow_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-                shadow_range.NumDescriptors = 1;
-                shadow_range.BaseShaderRegister = 3;
-                shadow_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-                D3D12_ROOT_PARAMETER parameters[9]{};
+                D3D12_ROOT_PARAMETER parameters[3]{};
                 parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
                 parameters[0].Constants.ShaderRegister = 0;
                 parameters[0].Constants.RegisterSpace = 0;
                 parameters[0].Constants.Num32BitValues = 16;
                 parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
-                parameters[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-                parameters[7].Descriptor.ShaderRegister = 1;
-                parameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-                for (UINT index = 0; index < 6; ++index)
+                for (UINT index = 0; index < 2; ++index)
                 {
                     parameters[index + 1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
                     parameters[index + 1].DescriptorTable.NumDescriptorRanges = 1;
@@ -1847,7 +1903,7 @@ namespace sl::detail
                     parameters[index + 1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
                 }
                 D3D12_ROOT_SIGNATURE_DESC signature_desc{};
-                signature_desc.NumParameters = 3;
+                signature_desc.NumParameters = static_cast<UINT>(std::size(parameters));
                 signature_desc.pParameters = parameters;
                 signature_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
                 ID3DBlob *serialized = nullptr;
@@ -2425,7 +2481,8 @@ namespace sl::detail
                 }
 
                 // Tables 1-6: colour SRV t0, colour sampler s0, normal SRV t1, normal sampler s1, and the PBR
-                // occlusion-roughness-metalness SRV t2 and sampler s2. Parameter 7 is the PBR constant buffer b1.
+                // occlusion-roughness-metalness SRV t2 and sampler s2. Parameters 7-9 bind PBR constants and
+                // the sun and local shadow maps.
                 D3D12_DESCRIPTOR_RANGE ranges[6]{};
                 for (UINT index = 0; index < 6; ++index)
                 {
@@ -2435,10 +2492,18 @@ namespace sl::detail
                     ranges[index].BaseShaderRegister = index / 2;
                     ranges[index].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
                 }
-                D3D12_ROOT_PARAMETER parameters[8]{};
+                D3D12_DESCRIPTOR_RANGE shadow_ranges[2]{};
+                for (UINT index = 0; index < 2; ++index)
+                {
+                    shadow_ranges[index].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+                    shadow_ranges[index].NumDescriptors = 1;
+                    shadow_ranges[index].BaseShaderRegister = index + 3;
+                    shadow_ranges[index].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+                }
+                D3D12_ROOT_PARAMETER parameters[10]{};
                 parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
                 parameters[0].Constants.ShaderRegister = 0;
-                // 32 mesh constants plus 16 for the environment; with the seven tables and the CBV this is 57 of 64 DWORDs.
+                // 32 mesh constants plus 16 for the environment, eight tables, and one CBV use 58 of 64 DWORDs.
                 parameters[0].Constants.Num32BitValues = 48;
                 parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
                 for (UINT index = 0; index < 6; ++index)
@@ -2453,8 +2518,12 @@ namespace sl::detail
                 parameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
                 parameters[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
                 parameters[8].DescriptorTable.NumDescriptorRanges = 1;
-                parameters[8].DescriptorTable.pDescriptorRanges = &shadow_range;
+                parameters[8].DescriptorTable.pDescriptorRanges = &shadow_ranges[0];
                 parameters[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+                parameters[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+                parameters[9].DescriptorTable.NumDescriptorRanges = 1;
+                parameters[9].DescriptorTable.pDescriptorRanges = &shadow_ranges[1];
+                parameters[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
                 D3D12_ROOT_SIGNATURE_DESC signature_desc{};
                 signature_desc.NumParameters = static_cast<UINT>(std::size(parameters));
                 signature_desc.pParameters = parameters;
@@ -2585,8 +2654,10 @@ namespace sl::detail
                 }
                 ID3DBlob *vertex_blob = nullptr;
                 ID3DBlob *pixel_blob = nullptr;
+                // Optimisation level 0 keeps the loop-heavy sky shader from taking seconds to compile.
                 if (!compile_shader(vertex_source, "main", "vs_5_0", &vertex_blob, last_error_) ||
-                    !compile_shader(pixel_source, "main", "ps_5_0", &pixel_blob, last_error_))
+                    !compile_shader(pixel_source, "main", "ps_5_0", &pixel_blob, last_error_,
+                                    D3DCOMPILE_OPTIMIZATION_LEVEL0))
                 {
                     if (vertex_blob)
                         vertex_blob->Release();
@@ -2876,6 +2947,24 @@ namespace sl::detail
                 return true;
             }
 
+            void rebind_frame_targets()
+            {
+                if (active_render_target_ != 0)
+                {
+                    bind_active_render_target();
+                    return;
+                }
+                context_.bind_backbuffer();
+                if (last_2d_width_ > 0 && last_2d_height_ > 0)
+                {
+                    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(last_2d_width_),
+                                            static_cast<float>(last_2d_height_), 0.0f, 1.0f};
+                    D3D12_RECT scissor{0, 0, last_2d_width_, last_2d_height_};
+                    context_.command_list()->RSSetViewports(1, &viewport);
+                    context_.command_list()->RSSetScissorRects(1, &scissor);
+                }
+            }
+
             void suspend_active_render_target()
             {
                 if (active_render_target_ == 0)
@@ -2911,7 +3000,7 @@ namespace sl::detail
                 HRESULT result = context_.device()->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srv_heap_));
                 if (FAILED(result))
                     return false;
-                desc.NumDescriptors = descriptor_capacity + transient_sampler_capacity;
+                desc.NumDescriptors = persistent_sampler_capacity + transient_sampler_capacity;
                 desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
                 result = context_.device()->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&sampler_heap_));
                 if (FAILED(result))
@@ -3251,7 +3340,7 @@ namespace sl::detail
                 }
                 if (transient_sampler_offset_ + count > transient_sampler_capacity)
                     return UINT_MAX;
-                const std::uint32_t base = descriptor_capacity + transient_sampler_offset_;
+                const std::uint32_t base = persistent_sampler_capacity + transient_sampler_offset_;
                 transient_sampler_offset_ += count;
                 return base;
             }
@@ -3384,7 +3473,7 @@ namespace sl::detail
                             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
                         context_.device()->CopyDescriptorsSimple(
                             1, cpu_descriptor(sampler_heap_, sampler_descriptor_size_, sampler_base + slot),
-                            cpu_descriptor(sampler_heap_, sampler_descriptor_size_, texture->second.descriptor),
+                            cpu_descriptor(sampler_heap_, sampler_descriptor_size_, texture->second.sampler),
                             D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
                     }
                     set_table(program.texture_parameter_base,
@@ -3458,14 +3547,39 @@ namespace sl::detail
                      static_cast<UINT>(offsetof(Vertex2D, u)), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
                     {"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
                      static_cast<UINT>(offsetof(Vertex2D, r)), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
-                const D3D12_GRAPHICS_PIPELINE_STATE_DESC desc =
+                D3D12_GRAPHICS_PIPELINE_STATE_DESC desc =
                     make_2d_pipeline_desc(program.root_signature, program.vertex_blob, program.pixel_blob,
                                           primitive, variant, elements, static_cast<UINT>(std::size(elements)), samples);
-                if (!create_pipeline_state(desc, slot))
+                if (!create_pipeline_state(desc, slot) && !program.fxc_fallback && dxc_available(context_.device()) &&
+                    program.samplers.size() <= max_program_samplers_sm5)
                 {
-                    slot = nullptr;
-                    last_error_ = "Unable to create the D3D12 pipeline state for a user shader.";
+                    ID3DBlob *vertex_fallback = nullptr;
+                    ID3DBlob *pixel_fallback = nullptr;
+                    std::string fallback_error;
+                    if (compile_program_shader_fxc(program.vertex.hlsl, "vs", &vertex_fallback, fallback_error) &&
+                        compile_program_shader_fxc(program.pixel.hlsl, "ps", &pixel_fallback, fallback_error))
+                    {
+                        // Pipelines already built keep their own copy of the old bytecode.
+                        program.vertex_blob->Release();
+                        program.pixel_blob->Release();
+                        program.vertex_blob = vertex_fallback;
+                        program.pixel_blob = pixel_fallback;
+                        program.fxc_fallback = true;
+                        desc = make_2d_pipeline_desc(program.root_signature, program.vertex_blob, program.pixel_blob,
+                                                     primitive, variant, elements, static_cast<UINT>(std::size(elements)),
+                                                     samples);
+                        create_pipeline_state(desc, slot);
+                    }
+                    else
+                    {
+                        if (vertex_fallback)
+                            vertex_fallback->Release();
+                        if (pixel_fallback)
+                            pixel_fallback->Release();
+                    }
                 }
+                if (!slot)
+                    last_error_ = "Unable to create the D3D12 pipeline state for a user shader.";
                 return slot;
             }
 
@@ -3487,7 +3601,7 @@ namespace sl::detail
                 commands->SetGraphicsRootDescriptorTable(
                     1, gpu_descriptor(srv_heap_, srv_descriptor_size_, texture->second.descriptor));
                 commands->SetGraphicsRootDescriptorTable(
-                    2, gpu_descriptor(sampler_heap_, sampler_descriptor_size_, texture->second.descriptor));
+                    2, gpu_descriptor(sampler_heap_, sampler_descriptor_size_, texture->second.sampler));
                 return true;
             }
 
@@ -3543,6 +3657,7 @@ namespace sl::detail
             bool shutdown_2d_pending_ = false;
             ID3D12DescriptorHeap *srv_heap_ = nullptr;
             ID3D12DescriptorHeap *sampler_heap_ = nullptr;
+            std::unordered_map<std::uint32_t, std::uint32_t> sampler_slots_;
             ID3D12DescriptorHeap *render_target_heap_ = nullptr;
             ID3D12DescriptorHeap *depth_stencil_heap_ = nullptr;
             ID3D12RootSignature *root_signature_ = nullptr;

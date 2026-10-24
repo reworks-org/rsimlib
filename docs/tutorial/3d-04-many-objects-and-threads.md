@@ -4,6 +4,8 @@
 
 **Goal:** draw thousands of objects, see how simlib records them on several CPU cores on Vulkan and Direct3D 12, and learn when to fill your own draw lists on worker threads.
 
+![The program from this lesson running](img/3d-04-many-objects-and-threads.png)
+
 ## The idea
 
 - Each `sl::draw_mesh()` call costs a little CPU time: simlib prepares the draw and the graphics API records a command for it. With a few hundred objects you will never notice. With tens of thousands, the CPU can become the bottleneck rather than the GPU.
@@ -145,4 +147,4 @@ Run it as `./lesson --vulkan` and press Space to cycle the modes.
 
 - Example: [`exparallel`](../examples/exparallel.md). Reference: [Parallel command recording](../renderers.md#parallel-command-recording), [3D Surfaces](../api_reference.md#3d-surfaces-includesurface3dh).
 - Related: [`exinstancing`](../examples/exinstancing.md) for the instancing alternative.
-- Next track: [Physics bodies](sim-01-physics-bodies.md).
+- Next: [Local lights and shadows](3d-05-local-lights-and-shadows.md), then the [Physics bodies](sim-01-physics-bodies.md) track.

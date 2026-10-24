@@ -28,7 +28,7 @@ namespace sl::detail
         // Mesh environment block: [0] light colour, fog, pbr, emissive, camera vectors (9 vec4s), then the eye position
         // (w = local light count), the shadow parameters and matrix, and three vec4s per local light. Returns the number of bytes in use.
         constexpr std::size_t mesh_environment_floats = 60 + local_light_vec4s * 4;
-        constexpr std::size_t terrain_environment_floats = 108 + local_light_vec4s * 4;
+        constexpr std::size_t terrain_environment_floats = 112 + local_light_vec4s * 4;
         std::size_t fill_mesh_environment(float *environment, const MeshDrawParams &params)
         {
             std::memcpy(environment, params.light_colour, sizeof(float) * 4);
@@ -183,6 +183,9 @@ namespace sl::detail
                 for (VulkanBuffer &buffer : vertex_buffers_)
                     context_.destroy_buffer(buffer);
                 vertex_buffers_.clear();
+                for (VulkanBuffer &buffer : retired_buffers_)
+                    context_.destroy_buffer(buffer);
+                retired_buffers_.clear();
                 for (auto &[handle, mesh] : meshes_)
                 {
                     context_.destroy_buffer(mesh.vertices);
@@ -377,6 +380,9 @@ namespace sl::detail
                 if (frame_active_)
                 {
                     vertex_buffer_cursor_ = 0;
+                    for (VulkanBuffer &buffer : retired_buffers_)
+                        context_.destroy_buffer(buffer);
+                    retired_buffers_.clear();
                     for (VulkanTexture &texture : retired_textures_)
                     {
                         context_.free_descriptor_set(descriptor_pool_, texture.descriptor);
@@ -643,7 +649,14 @@ namespace sl::detail
                 const auto found = meshes_.find(handle);
                 if (found == meshes_.end())
                     return;
-                // Buffers may still be referenced by a submitted frame.
+                // The frame being recorded may already have drawn this mesh, so free it once that frame has finished.
+                if (context_.frame_active())
+                {
+                    retired_buffers_.push_back(found->second.vertices);
+                    retired_buffers_.push_back(found->second.indices);
+                    meshes_.erase(found);
+                    return;
+                }
                 if (context_.device() != VK_NULL_HANDLE)
                     context_.wait_device_idle();
                 context_.destroy_buffer(found->second.vertices);
@@ -737,15 +750,16 @@ namespace sl::detail
                     environment[87] = static_cast<float>(lights);
                     std::memcpy(environment + 88, params.shadow, sizeof(float) * 4);
                     std::memcpy(environment + 92, params.shadow_matrix, sizeof(float) * 16);
-                    std::memcpy(environment + 108, params.local_lights, sizeof(float) * 16 * lights);
-                    std::size_t environment_bytes = sizeof(float) * (108 + 16 * lights);
+                    std::memcpy(environment + 108, params.pbr, sizeof(float) * 4);
+                    std::memcpy(environment + 112, params.local_lights, sizeof(float) * 16 * lights);
+                    std::size_t environment_bytes = sizeof(float) * (112 + 16 * lights);
                     if (params.shadow[3] >= 0.5f)
                     {
                         const std::size_t matrices =
                             static_cast<std::size_t>(std::clamp(params.shadow[3], 0.0f, float(local_shadow_slots))) * 24;
-                        std::memcpy(environment + 108 + local_shadow_matrix_base * 4,
+                        std::memcpy(environment + 112 + local_shadow_matrix_base * 4,
                                     params.local_lights[local_shadow_matrix_base], sizeof(float) * 4 * matrices);
-                        environment_bytes = sizeof(float) * (108 + (local_shadow_matrix_base + matrices) * 4);
+                        environment_bytes = sizeof(float) * (112 + (local_shadow_matrix_base + matrices) * 4);
                     }
                     VkDescriptorSet shadow_descriptor = VK_NULL_HANDLE;
                     VkDescriptorSet local_shadow_descriptor = VK_NULL_HANDLE;
@@ -814,7 +828,12 @@ namespace sl::detail
                 const auto found = instance_buffers_.find(handle);
                 if (found == instance_buffers_.end())
                     return;
-                // The buffer may still be referenced by a submitted frame.
+                if (context_.frame_active())
+                {
+                    retired_buffers_.push_back(found->second.buffer);
+                    instance_buffers_.erase(found);
+                    return;
+                }
                 if (context_.device() != VK_NULL_HANDLE)
                     context_.wait_device_idle();
                 context_.destroy_buffer(found->second.buffer);
@@ -948,12 +967,9 @@ namespace sl::detail
                     const auto iterator = render_targets_.find(framebuffer);
                     if (iterator != render_targets_.end())
                     {
+                        // The descriptor set was written at creation and still points at this image, so rewriting it
+                        // here would only invalidate command buffers that already bind it.
                         iterator->second.image.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                        if (!context_.update_texture_descriptor(iterator->second.descriptor,
-                                                                iterator->second.image, iterator->second.sampler, last_error_))
-                        {
-                            return false;
-                        }
                     }
                 }
                 return true;
@@ -3015,6 +3031,7 @@ namespace sl::detail
             }
             std::unordered_map<std::uint32_t, VulkanTexture> textures_;
             std::unordered_map<std::uint32_t, VulkanTextureArray> texture_arrays_;
+            std::vector<VulkanBuffer> retired_buffers_;
             std::vector<VulkanTexture> retired_textures_;
             std::vector<VulkanTextureArray> retired_texture_arrays_;
             std::vector<VulkanRenderTarget> retired_render_targets_;

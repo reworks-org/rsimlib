@@ -2,6 +2,7 @@
 #include "scene3d.h"
 #include "renderer.h"
 #include "vulkan_context.h"
+#include "shader_paths.h"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -36,7 +37,7 @@ int main(int argc, char *argv[])
     if (!sl::set_graphics_backend(sl::GraphicsBackend::vulkan) ||
         !sl::set_gfx_mode(sl::GFX_AUTODETECT_WINDOWED, 800, 600))
     {
-        std::fprintf(stderr, "Failed to set Vulkan graphics backend or graphics mode.\n");
+        std::fprintf(stderr, "Failed to set Vulkan graphics backend or graphics mode: %s\n", sl::last_error().c_str());
         return -1;
     }
 
@@ -53,7 +54,7 @@ int main(int argc, char *argv[])
     sl::detail::VulkanGraphicsPipeline pipeline;
     sl::detail::VulkanBuffer vertex_buffer;
     std::string error;
-    const std::filesystem::path shader_dir = SIMLIB_SHADER_BINARY_DIR;
+    const std::filesystem::path shader_dir = sl::detail::find_shader_root("vulkan/vulkan_ex3d.vert.spv");
     if (!context->load_shader_module(shader_dir / "vulkan/vulkan_ex3d.vert.spv", vertex_module, error) ||
         !context->load_shader_module(shader_dir / "vulkan/vulkan_ex3d.frag.spv", fragment_module, error) ||
         !context->create_dynamic_descriptor_layout({}, descriptor_layout, error) ||

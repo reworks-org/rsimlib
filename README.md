@@ -1,8 +1,12 @@
 # simlib
 
-[![simlib showreel on YouTube: click to watch](docs/showreel_thumbnail.png)](https://www.youtube.com/watch?v=D1dyvnGUUNw)
+[![simlib showreel 1 on YouTube: click to watch](docs/showreel1_thumbnail.png)](https://www.youtube.com/watch?v=D1dyvnGUUNw)
 
-**[Watch the showreel](https://www.youtube.com/watch?v=D1dyvnGUUNw)**: a three-minute tour of simlib, rendered entirely by simlib itself.
+**[Watch showreel 1](https://www.youtube.com/watch?v=D1dyvnGUUNw)**: a three-minute tour of simlib, rendered entirely by simlib itself.
+
+[![simlib showreel 2 on YouTube: click to watch](docs/showreel2_thumbnail.png)](https://www.youtube.com/watch?v=XAhfCniKO2k)
+
+**[Watch showreel 2](https://www.youtube.com/watch?v=XAhfCniKO2k)**: storms and warships, airliners, 3D cockpits and an orbital burn, again rendered entirely by simlib.
 
 `simlib` is an easy-to-use, feature-rich C++ multimedia and rendering framework for 2D and 3D applications, with an Allegro 4-style API built on SDL2 and selectable OpenGL, Vulkan and Direct3D 12 backends.
 
@@ -10,7 +14,7 @@ It combines immediate-mode 2D drawing and automatic batching with a powerful 3D 
 
 ## Start here
 
-simlib comes with a short [Tutorial](docs/tutorial/README.md) (12 lessons across 2D, 3D and simulation) and a gallery of runnable examples with a page each in the [Example Gallery](docs/examples/README.md). Pick the route below that matches what you are building.
+simlib comes with a short [Tutorial](docs/tutorial/README.md) (21 lessons across 2D, 3D, simulation and shipping an app) and a gallery of runnable examples with a page each in the [Example Gallery](docs/examples/README.md). Pick the route below that matches what you are building.
 
 | I want to... | Run | Read |
 |--------------|-----|------|
@@ -74,16 +78,17 @@ Create the archive used by `exresources` from the repository root with:
 ## Documentation Guides
 
 For in-depth guides and detailed API tables, see the documentation topics:
-- 🎓 **[Tutorial](docs/tutorial/README.md)** — Short, runnable lessons in three tracks (2D, 3D, simulation) for anyone new to simlib.
+- 🎓 **[Tutorial](docs/tutorial/README.md)** — Short, runnable lessons in four tracks (2D, 3D, simulation, shipping an app) for anyone new to simlib.
 - 📖 **[Core API Reference](docs/api_reference.md)** — Display, bitmaps, shape primitives, persistent font atlases, audio subsystems, fluid simulation, and ZIP archives.
 - 🗺️ **[Tile Maps & Tiled Import](#tile-maps--tiled-import)** — Load Tiled maps, animated tiles, collision, object layers, isometric maps.
 - 🧩 **[Entity Component System (ECS) Integration Guide](docs/ecs.md)** — Architectural patterns, clean separation of concerns, and interoperability with RECS, EnTT, Flecs, or custom ECS frameworks.
 - 🌊 **[3D Fluid Simulation](docs/api_reference.md#3d-fluid-simulation-includefluid3dh)** — Cellular automata fluids, fire and sand in a bounded region that reads solids from and writes fluid blocks back to a `VoxelWorld`.
 - 🎨 **[Graphics Effects & 2D Lighting](docs/graphics_effects.md)** — 17+ post-processing shaders, `PingPongBuffer` compositing pipeline, radial lights, dynamic polygon soft shadows, and 2D/3D normal mapping.
 - ⚙️ **[Renderer Backends & Architecture](docs/renderers.md)** — OpenGL 4.3, Vulkan, Direct3D 12 backends, automatic hardware batching, runtime GLSL-to-SPIR-V compilation, and direct 3D rendering APIs.
-- 🧊 **[3D Surfaces & Model Loading](docs/api_reference.md#3d-surfaces-includesurface3dh)** — Offscreen MSAA 3D targets, camera perspective, directional lighting, OBJ/glTF/GLB/AC3D models (with node and skeletal animation and PBR materials), and seamless 2D HUD compositing. See the [AC3D and FlightGear guide](docs/ac3d.md) for model animation support and the [Blender and glTF workflow](docs/blender.md) for exporting from Blender or converting AC3D assets to `.glb`.
+- 🧊 **[3D Surfaces & Model Loading](docs/api_reference.md#3d-surfaces-includesurface3dh)** — Offscreen MSAA 3D targets, camera perspective, directional, point and spot lighting with shadows, OBJ/glTF/GLB/AC3D models (with node and skeletal animation and PBR materials), and seamless 2D HUD compositing. See the [AC3D and FlightGear guide](docs/ac3d.md) for model animation support and the [Blender and glTF workflow](docs/blender.md) for exporting from Blender or converting AC3D assets to `.glb`.
 - 🧱 **[Voxel Chunks & World](docs/api_reference.md#voxel-chunks--world-includevoxelh)** — 16x16x16 chunk rendering, hidden-face culling into GPU vertex buffers, texture atlas mapping, multi-chunk coordination, and 3D DDA raycasting for Minecraft-style worlds.
-- 🏔️ **[Chunked-LOD Terrain](docs/terrain.md)** — Streamed quadtree terrain for flat arenas or planets: procedural, heightmap or editable sources, splat-textured layers with mipmapping and optional normal maps, geomorphing, exact height/normal/raycast queries, Lua bindings and `FlightWorld` ground integration.
+- 🏠 **[Props Catalogue](docs/props.md)** — Every low-poly part in `props3d.h` (buildings, vehicles, trees, Apollo-era rockets, satellites, control panels) with its arguments and how to create, place and bake it.
+- 🏔️ **[Chunked-LOD Terrain](docs/terrain.md)** — Streamed quadtree terrain for flat arenas or planets: procedural, heightmap or editable sources, splat-textured layers with mipmapping and optional normal maps, geomorphing, specular highlights, exact height/normal/raycast queries, an `sl::Ocean` sea with a shoaling, foaming shoreline, Lua bindings and `FlightWorld` ground integration.
 - 🌫️ **[World Flavour](docs/world_flavour.md)** — Sky, exponential fog, Rayleigh/Mie planetary atmosphere, 2D or volumetric clouds, and terrain-aware scattering of trees and rocks with mesh-to-impostor LOD, all scriptable from Lua.
 - 🛰️ **[Flight & Orbital Dynamics](docs/flight.md)** — Double-precision 3D rigid bodies with N-body gravity, Kepler rails and time warp, thrusters/RCS, atmosphere, lifting surfaces and landing gear for Orbiter-style or aircraft sims.
 - 🌐 **[Networking](docs/networking.md)** — ENet-based UDP client/server with reliable and unreliable channels, bounds-checked packet reading and writing, and a non-blocking TCP socket for talking to services such as IRC.
@@ -137,13 +142,19 @@ Renderers are selected with `-DSIMLIB_RENDERERS="gl;vulkan;d3d12"` (default `gl;
 | `SIMLIB_RENDERERS` | `gl`, `vulkan`, `d3d12` (list) | `gl;vulkan` (+ `d3d12` on Windows) |
 | `SIMLIB_GUI` | `imgui`, `none` | `imgui` |
 | `SIMLIB_VIDEO` | `plmpeg`, `ffmpeg`, `none` | `plmpeg` |
+| `SIMLIB_D3D12_BUILD_TRANSLATION` | `ON`, `OFF` | `ON` (Windows, with `d3d12`) |
+| `SIMLIB_D3D12_REQUIRE_TRANSLATION` | `ON`, `OFF` | `ON` (Windows, with `d3d12`) |
+
+With `SIMLIB_D3D12_BUILD_TRANSLATION` (the default), glslang and SPIRV-Cross are downloaded and built from source when vcpkg does not provide them, which lengthens the first build. `SIMLIB_D3D12_REQUIRE_TRANSLATION` applies when that is `OFF`: it makes the configure step fail when glslang or SPIRV-Cross is missing, because without them the Direct3D 12 lighting, bloom and compute effects cannot run.
 
 On Windows, install GLEW, libpng, and zlib with vcpkg, then configure CMake with the vcpkg toolchain. GLEW loads the OpenGL 4.3 entry points used by the optional OpenGL backend; libpng and zlib are required by PNG export:
 
 ```powershell
-vcpkg install glew:x64-windows libpng:x64-windows zlib:x64-windows glslang:x64-windows spirv-cross:x64-windows directx-dxc:x64-windows
+vcpkg install glew:x64-windows libpng:x64-windows zlib:x64-windows glslang:x64-windows spirv-cross:x64-windows directx-dxc:x64-windows "sdl2[vulkan]:x64-windows"
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="C:\path\to\vcpkg\scripts\buildsystems\vcpkg.cmake"
 ```
+
+The `[vulkan]` feature matters: vcpkg's default SDL2 is built without Vulkan, and the Vulkan backend then fails at startup with "Vulkan support is either not configured in SDL or not available". The Vulkan backend also needs `vulkan-1.dll` (installed with the GPU driver) and the compiled `.spv` shaders next to the executables. If `glslangValidator` is not installed (vcpkg's glslang omits it unless you ask for `glslang[tools]`, and the Vulkan SDK includes it), CMake builds glslang's compiler from source and uses it to generate the `.spv` files, which needs network access and Python 3 at configure/build time; pass `-DSIMLIB_BUILD_SHADER_COMPILER=OFF` to skip this. `glslang` and `spirv-cross` are needed for the Direct3D 12 effects (lighting, bloom, compute); without them those examples fail on `--d3d12`.
 
 ### Video Playback
 
@@ -223,6 +234,20 @@ Runtime shader assets (`share/simlib/shaders/{glsl,d3d,vulkan}`) are searched fo
 
 If you only move the install, point `SIMLIB_DATA_DIR` at the new location or place the `share/simlib` folder relative to your executable.
 
+### Distribute an Application
+
+`find_package(simlib)` also provides `simlib_add_package()`, which adds a `<target>_package` target that zips your executable with everything it needs at run time: shared libraries such as the SDL2 DLLs, simlib's shaders (including the compiled Vulkan SPIR-V), `dxcompiler.dll`/`dxil.dll` when known, your assets and the licences.
+
+```cmake
+simlib_add_package(TARGET my_app NAME my_app-1.0-win64 ASSETS assets EXTRA_FILES README.txt)
+```
+
+```bash
+cmake --build build --config Release --target my_app_package   # -> build/package/my_app-1.0-win64.zip
+```
+
+Unzip anywhere and run; simlib finds the shaders beside the executable. Set `SIMLIB_PACKAGE_DXC_DIR` to a folder holding the DXC DLLs if they are not detected. On Linux the system SDL2 libraries are not bundled. Vulkan users still need `vulkan-1.dll` from their GPU driver.
+
 Run the test suite:
 
 ```bash
@@ -252,7 +277,7 @@ sl::draw_tilemap(map, camera_x, camera_y);          // draws only the visible ce
 sl::destroy_tilemap(map);
 ```
 
-Maps can also be built in code with `create_tilemap()` and `tilemap_add_layer()`. Tiled maps (`.tmj`/`.json` and native `.tmx`) load with CSV or base64 layer data (uncompressed, zlib or gzip), infinite maps, external `.tsj`/`.tsx` tilesets and image-collection tilesets. Not supported: zstd-compressed layers (choose zlib in Tiled), and infinite isometric maps. See [`extilemap`](src/examples/extilemap/extilemap.cpp) (pass your own `.tmj` or `.tmx` path to view it) and the [Tile Maps API reference](docs/api_reference.md#tile-maps-includetilemaph).
+Maps can also be built in code with `create_tilemap()` and `tilemap_add_layer()`. Tiled maps (`.tmj`/`.json` and native `.tmx`) load with CSV or base64 layer data (uncompressed, zlib or gzip), infinite maps, external `.tsj`/`.tsx` tilesets, image-collection tilesets, layer opacity and tint colours, group layers (children inherit the group's visibility, opacity, offset and tint), image layers and tile objects. `tilemap_add_decal()` stamps runtime splats, scorch marks and footprints at free positions. Not supported: zstd-compressed layers (choose zlib in Tiled), and infinite isometric maps. See [`extilemap`](src/examples/extilemap/extilemap.cpp) (pass your own `.tmj` or `.tmx` path to view it) and the [Tile Maps API reference](docs/api_reference.md#tile-maps-includetilemaph).
 
 ## 3D Graphics: Surfaces, Models & Voxel Worlds
 
@@ -311,8 +336,12 @@ The full catalog of focused runnable examples follows.
 ./build/showcase3d      # 3D showcase: terrain LOD, clouds, atmosphere and clutter
 ./build/showcasevoxel   # Voxel showcase: chunk meshing, lighting and block editing
 ./build/exorbit         # Spaceflight: orbits, RCS, time warp, Moon on rails
-./build/exocean         # Gerstner-wave ocean, clouds and a ship on the swell
+./build/exocean         # Gerstner-wave ocean (sl::Ocean), clouds and a ship on the swell
 ./build/exlights3d      # Many 3D point/spot lights with sun and light shadows
+./build/exprops         # Gallery of low-poly 3D scenery parts
+./build/extown          # A town and airfield built from scenery parts
+./build/excontrols      # 2D cockpit and factory control panels with glowing lamps
+./build/excockpit       # 3D cockpit and control cabinet with mouse picking
 ./build/exhdr           # HDR post-process: bloom, exposure and tone mapping
 ./build/exterrain       # Chunked-LOD terrain (add 'planet' for a planet)
 ./build/exflight        # Aircraft flight: lift, stall, jet engine, landing gear
@@ -342,6 +371,7 @@ The full catalog of focused runnable examples follows.
 ./build/exlobby         # Game lobby: find games in an IRC channel, then play over UDP (--irc-host HOST to choose the server)
 ./build/expathfinding   # Flow-field enemies (chase/scent/sound) with wall editing and heat-map overlays
 ./build/exanimsprite    # AnimationManager: looping, rotated, paused and one-shot animated sprites from an atlas
+./build/exxeno         # Lit top-down shooter with tile-map decal splats (WASD + mouse)
 ./build/extilemap       # Scrolling tile map with collision and animated tiles (optionally a Tiled .tmj path)
 ./build/exconfig        # JSON configuration loading, saving, dotted keys, and live UI
 ./build/expostprocess   # Full post-processing effects and ping-pong chaining
@@ -377,10 +407,14 @@ Each entry links to its source and to a page with a screenshot, controls and key
 - **[`exbitmap`](src/examples/exbitmap/exbitmap.cpp)** — Bitmap creation, pixel access, blitting, and image loading. [Screenshot & guide](docs/examples/exbitmap.md).
 - **[`exlighting`](src/examples/exlighting/exlighting.cpp)** — Render targets, radial lights, shadow casters, and `LightingPass`. [Screenshot & guide](docs/examples/exlighting.md).
 - **[`exphysics`](src/examples/exphysics/exphysics.cpp)** — Box2D world/body/fixture creation, stepping, and contact polling. [Screenshot & guide](docs/examples/exphysics.md).
-- **[`exterrain`](src/examples/exterrain/exterrain.cpp)** — Fly over streamed chunked-LOD terrain, flat or planet-sized, with splat layers, mipmaps, normal maps (`N`), geomorphing, sky, fog, clouds (`H`/`K`/`Z`/`X`) and scattered trees and rocks (`T`). [Screenshot & guide](docs/examples/exterrain.md).
-- **[`exocean`](src/examples/exocean/exocean.cpp)** — A Gerstner-wave ocean with sun glitter and foam, volumetric clouds, sunsets, and a dreadnought that heaves, pitches and rolls on the swell. [Screenshot & guide](docs/examples/exocean.md).
+- **[`exterrain`](src/examples/exterrain/exterrain.cpp)** — Fly over streamed chunked-LOD terrain, flat or planet-sized, with splat layers, mipmaps, normal maps (`N`), geomorphing, sky, fog, clouds (`H`/`K`/`Z`/`X`) and scattered trees and rocks (`T`), plus a Gerstner-wave sea with a shoreline around the islands (`O`, Up/Down for sea state). [Screenshot & guide](docs/examples/exterrain.md).
+- **[`exocean`](src/examples/exocean/exocean.cpp)** — A Gerstner-wave ocean (the shared `sl::Ocean` class) with sun glitter and foam, volumetric clouds, sunsets, and a dreadnought that heaves, pitches and rolls on the swell. [Screenshot & guide](docs/examples/exocean.md).
 - **[`exhdr`](src/examples/exhdr/exhdr.cpp)** — A lamp-lit courtyard through `sl::Hdr`: scene-space bloom, live exposure (Up/Down) and Reinhard/ACES tone mapping (`T`). [Screenshot & guide](docs/examples/exhdr.md).
-- **[`exlights3d`](src/examples/exlights3d/exlights3d.cpp)** — Up to 16 coloured point lights and a sweeping spotlight added to a moonlit scene of pillars and spheres, with soft sun shadows (`S`) and spot/point light shadows (`L`). [Screenshot & guide](docs/examples/exlights3d.md).
+- **[`exlights3d`](src/examples/exlights3d/exlights3d.cpp)** — Up to 16 local lights (a sweeping spotlight plus coloured point lights) added to a moonlit scene of pillars and spheres, with soft sun shadows (`S`) and spot/point light shadows (`L`). [Screenshot & guide](docs/examples/exlights3d.md).
+- **[`exprops`](src/examples/exprops/exprops.cpp)** — A lit gallery of the 43 low-poly parts from `props3d.h` (house, fence, barrel, crate, skyscraper, wall, office, radar, control tower, water tower, trees, rocks, car, spaceship, aeroplane, plus Apollo-era rocket stages, fairings, a Saturn V, satellites and a Skylab) with focus, zoom and day/night. [Screenshot & guide](docs/examples/exprops.md).
+- **[`extown`](src/examples/extown/extown.cpp)** — A town and airfield assembled from props with `bake_instances`, sun shadows, and street lamps that become local lights at night. [Screenshot & guide](docs/examples/extown.md).
+- **[`excontrols`](src/examples/excontrols/excontrols.cpp)** — Cockpit and factory control panels in 2D: dials, knobs, toggles, buttons, sliders, LED meters and glowing lamps, all mouse-operated. [Screenshot & guide](docs/examples/excontrols.md).
+- **[`excockpit`](src/examples/excockpit/excockpit.cpp)** — A 3D cockpit and control cabinet built from props, with mouse picking onto the panels, emissive LEDs and HDR bloom. [Screenshot & guide](docs/examples/excockpit.md).
 - **[`exorbit`](src/examples/exorbit/exorbit.cpp)** — Spaceflight with `FlightWorld`: orbit about Earth, main/retro engines, RCS thruster groups, predicted trajectory, time warp and a Moon on Kepler rails. [Screenshot & guide](docs/examples/exorbit.md).
 - **[`exflight`](src/examples/exflight/exflight.cpp)** — Aircraft flight with `FlightWorld`: lifting and control surfaces, jet engine, landing gear on a runway, stalls. [Screenshot & guide](docs/examples/exflight.md).
 - **[`exvulkan`](src/examples/exvulkan/exvulkan.cpp)** — Backend selection, textured sprites, render targets, and Bloom. [Screenshot & guide](docs/examples/exvulkan.md).
@@ -409,6 +443,7 @@ Each entry links to its source and to a page with a screenshot, controls and key
 - **[`exlobby`](src/examples/exlobby/exlobby.cpp)** — A game lobby built on `sl::TcpSocket` and `sl::NetServer`/`NetClient`: chat and find games in an IRC channel (`--irc-host`, `--irc-port`, `--channel`, `--nick`), host or join one, ready up and move around a shared arena. [Screenshot & guide](docs/examples/exlobby.md).
 - **[`expathfinding`](src/examples/expathfinding/expathfinding.cpp)** — Enemies that never search: they read a chase distance field, then scent and sound layers from `Pathfinder`. Click to edit walls, Space to view each layer. [Screenshot & guide](docs/examples/expathfinding.md).
 - **[`exanimsprite`](src/examples/exanimsprite/exanimsprite.cpp)** — A procedural atlas driven by `AnimationManager`: sprites at different frame rates, a rotated sprite, pausing, and click-spawned one-shot explosions. [Screenshot & guide](docs/examples/exanimsprite.md).
+- **[`exxeno`](src/examples/exxeno/exxeno.cpp)** — Lit 2D shooter with synthesised sound effects and an adrenaline music loop: WASD and mouse aim, glowing bolts, particles, shadow-casting walls and acid splats stamped as tile-map decals. [Screenshot & guide](docs/examples/exxeno.md).
 - **[`extilemap`](src/examples/extilemap/extilemap.cpp)** — Scrolling tile map with layers, collision, tile animation and Tiled JSON loading. [Screenshot & guide](docs/examples/extilemap.md).
 - **[`exconfig`](src/examples/exconfig/exconfig.cpp)** — JSON configuration loading, saving, dotted key paths, and typed getters/setters. [Screenshot & guide](docs/examples/exconfig.md).
 - **[`excompute`](src/examples/excompute/excompute.cpp)** — GPU compute shader particle simulation and SSBO data readback. [Screenshot & guide](docs/examples/excompute.md).
