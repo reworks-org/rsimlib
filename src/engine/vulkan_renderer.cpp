@@ -441,6 +441,49 @@ namespace sl::detail
                 textures_.emplace(texture, std::move(resource));
                 return true;
             }
+            static VkFormat compressed_vk_format(CompressedFormat format)
+            {
+                switch (format)
+                {
+                case CompressedFormat::bc1:
+                    return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+                case CompressedFormat::bc3:
+                    return VK_FORMAT_BC3_UNORM_BLOCK;
+                default:
+                    return VK_FORMAT_BC7_UNORM_BLOCK;
+                }
+            }
+            bool supports_compressed_format(CompressedFormat format) const override
+            {
+                return context_.compressed_format_supported(compressed_vk_format(format));
+            }
+            bool create_texture_compressed(const CompressedTextureDesc &description, const std::uint8_t *data,
+                                           std::uint32_t &texture) override
+            {
+                texture = 0;
+                if (!data || compressed_texture_byte_count(description) == 0 ||
+                    !supports_compressed_format(description.format))
+                    return false;
+                VulkanTexture resource;
+                const bool mipmapped = description.mip_levels > 1;
+                if (!context_.create_image(description.width, description.height, compressed_vk_format(description.format),
+                                           VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, resource.image,
+                                           last_error_, VK_SAMPLE_COUNT_1_BIT,
+                                           static_cast<std::uint32_t>(description.mip_levels)) ||
+                    !context_.create_sampler(description.filter, resource.sampler, last_error_, description.anisotropy,
+                                             mipmapped) ||
+                    !context_.upload_image_compressed(resource.image, description, data, last_error_) ||
+                    !context_.allocate_texture_descriptor(descriptor_pool_, descriptor_layout_, resource.image,
+                                                          resource.sampler, resource.descriptor, last_error_))
+                {
+                    context_.destroy_sampler(resource.sampler);
+                    context_.destroy_image(resource.image);
+                    return false;
+                }
+                texture = next_texture_++;
+                textures_.emplace(texture, std::move(resource));
+                return true;
+            }
             int max_texture_size() const override
             {
                 const std::uint32_t size = context_.max_texture_size();
@@ -667,6 +710,11 @@ namespace sl::detail
             {
                 flush_2d();
                 return context_.clear_active_frame_3d(red, green, blue, alpha, last_error_);
+            }
+            bool clear_depth_3d() override
+            {
+                flush_2d();
+                return context_.clear_active_depth_3d(last_error_);
             }
             bool draw_mesh(std::uint32_t handle, const MeshDrawParams &params) override
             {

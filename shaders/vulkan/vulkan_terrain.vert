@@ -16,11 +16,13 @@ layout(location = 6) out float vViewDepth;
 void main()
 {
     vec3 eye = transform.normalRows[1].xyz;
-    float morph = smoothstep(transform.normalRows[1].w, transform.normalRows[2].x, distance(aPosition, eye));
-    vec3 position = aPosition + aTangent.xyz * morph;
+    vec4 q = vec4(transform.normalRows[0].xyz, transform.normalRows[2].w);
+    vec3 turned = aPosition + 2.0 * cross(q.xyz, cross(q.xyz, aPosition) + q.w * aPosition);
+    float morph = smoothstep(transform.normalRows[1].w, transform.normalRows[2].x, distance(turned, eye));
+    vec3 position = turned + (aTangent.xyz + 2.0 * cross(q.xyz, cross(q.xyz, aTangent.xyz) + q.w * aTangent.xyz)) * morph;
     gl_Position = transform.mvp * vec4(position, 1.0);
     vViewDepth = gl_Position.w;
-    vNormal = aNormal;
+    vNormal = aNormal + 2.0 * cross(q.xyz, cross(q.xyz, aNormal) + q.w * aNormal);
     vPosition = position;
     vWeightsA = aWeightsA;
     vWeightsB = aWeightsB;

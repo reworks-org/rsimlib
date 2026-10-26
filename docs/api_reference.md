@@ -144,6 +144,18 @@ void set_window_title(const char *title);
   - `title` (`const char*`): UTF-8 string for the window title.
 - **Returns**: None.
 
+#### `set_window_icon(icon)` / `reset_window_icon()`
+```cpp
+bool set_window_icon(Bitmap *icon);
+bool set_window_icon(const char *path);
+void reset_window_icon();
+```
+- **Description**: Sets the icon shown in the taskbar, window switcher and title bar. Every simlib window starts with the built-in sauronbrot icon; call these after `set_gfx_mode()` to replace it, or `reset_window_icon()` to restore it. A square image of 32x32 to 256x256 works best. On Windows the executable's own file icon (shown in Explorer) is a separate resource: simlib embeds `assets/icon/simlib.ico` by default (turn off with `-DSIMLIB_EMBED_ICON=OFF`), and an app can add its own `.rc` file to override it.
+- **Parameters**:
+  - `icon` (`Bitmap*`): Any bitmap with readable pixels; it is not consumed.
+  - `path` (`const char*`): An image file to load as the icon.
+- **Returns**: `true` if the icon was applied; `false` if there is no window or the image could not be loaded or read (`reset_window_icon()` returns nothing).
+
 #### `set_fullscreen(enabled)` / `toggle_fullscreen()`
 ```cpp
 bool set_fullscreen(bool enabled);
@@ -428,6 +440,15 @@ bool save_bitmap(Bitmap *bitmap, const std::string &path);
 void destroy_bitmap(Bitmap *bitmap);
 ```
 - **Description**: Loads an image file (PNG, JPG, BMP) into a bitmap, exports a bitmap as a PNG image, or destroys a bitmap and frees all associated RAM/GPU memory.
+
+#### `load_dds(path, options)` ([include/dds.h](../include/dds.h))
+```cpp
+struct DdsOptions { int max_size = 0; bool smooth = true; float anisotropy = 1.0f; bool allow_compressed_upload = true; };
+Bitmap *load_dds(const std::string &path, const DdsOptions &options = {});
+```
+- **Description**: Loads a `.dds` file: BC1/DXT1, BC3/DXT5 or BC7 (DX10 header), or uncompressed 32-bit RGBA/BGRA. Block-compressed data is uploaded to the GPU as-is with every mip level in the file, so memory is a fraction of RGBA8 (BC1 is 1/8, BC3/BC7 1/4) and there is no CPU decode or mip generation. If the file is larger than `max_size` (0 = the renderer's limit) its biggest mip levels are skipped. Supported on OpenGL (S3TC/BPTC extensions), Vulkan and D3D12.
+- **Compressed bitmaps**: the result has `Bitmap::compressed` set and no CPU pixels: drawing and `bind_texture()` work, but `getpixel`, `putpixel` and `download_bitmap()` fail. `smooth`, `anisotropy` and trilinear mips are fixed at load.
+- **Fallback**: when the backend lacks the format, `allow_compressed_upload` is false, or the file has no smaller mip to fit `max_size`, BC1/BC3/uncompressed files are decoded (top level only) into an ordinary RGBA bitmap. BC7 has no CPU fallback. Returns `nullptr` on failure.
 
 #### `upload_bitmap(bitmap)` / `download_bitmap(bitmap)`
 ```cpp
@@ -819,6 +840,37 @@ void set_physics_body_filter(PhysicsBody *body, std::uint16_t category_bits, std
 
 ---
 
+## 3D Rigid Boxes ([include/physics3d.h](../include/physics3d.h))
+
+Box2D is two-dimensional, so `physics3d.h` adds a small 3D rigid-body simulation for debris and other lightweight effects. Units are world units and seconds; nothing here uses pixels.
+
+#### `RigidBox3D`
+```cpp
+struct RigidBox3D {
+    glm::vec3 position, velocity, angular_velocity, half_extents;
+    glm::quat orientation;
+    float mass, restitution, friction, linear_damping, angular_damping;
+    float age, lifetime;       // lifetime 0 lives forever
+    std::uint32_t user;        // free for the caller
+    bool touching;             // touched the floor or an obstacle in the last step
+};
+```
+- **Description**: An oriented box with mass, a box inertia tensor, linear and angular velocity. `StaticBox3D { min, max }` is an axis-aligned box that bodies collide with.
+
+#### `RigidBoxWorld3D`
+```cpp
+RigidBox3D &add(const RigidBox3D &body);
+static void apply_impulse(RigidBox3D &body, const glm::vec3 &impulse, const glm::vec3 &point);
+void explode(const glm::vec3 &centre, float radius, float strength, float spin = 6.0f);
+void step(float dt, int substeps = 2);
+void clear();
+std::vector<RigidBox3D> &bodies();
+static glm::mat4 model_matrix(const RigidBox3D &body);
+```
+- **Description**: Public members `gravity` (default `{0, -9.81, 0}`), `has_floor`, `floor_height`, `obstacles` and `max_bodies`. `step()` applies gravity, resolves contacts with impulses (restitution, Coulomb friction, rotation about the contact point, so a cube landing on a corner tumbles), removes bodies past their `lifetime` and drops the oldest beyond `max_bodies`. Bodies collide with the floor and static boxes but not with each other. `apply_impulse()` pushes a body at a world point, which also spins it; `explode()` pushes every body within `radius` away from `centre` with a linear falloff and random spin. `model_matrix()` gives the transform for drawing a unit cube, ready for `draw_mesh_instanced()`. See `exinvaders`.
+
+---
+
 ## 3D Surfaces ([include/surface3d.h](../include/surface3d.h))
 
 A `Surface3D` is an offscreen colour+depth target you draw 3D meshes into, then composite into 2D with `draw_sprite(surface_3d_bitmap(surface), x, y)`. It works on the OpenGL, Vulkan and Direct3D 12 backends.
@@ -863,6 +915,21 @@ Also `find_model_clip`, `model_clip_duration`, `stop_model_clip`, `model_clip_pl
 **PBR materials.** glTF materials load as `Material::pbr` with `metallic`, `roughness`, `metallic_roughness` (a texture with occlusion in R, roughness in G and metalness in B), `occlusion_strength` and `emissive` (`KHR_materials_emissive_strength` is honoured). Lit PBR materials use Cook-Torrance GGX shading with the scene's directional light, and `Light3D::ambient` as a simple ambient/occlusion term; there is no image-based lighting. Limits: an occlusion texture is used only when it is the same image as the metallic-roughness texture, and an emissive texture is ignored (as is the emissive factor for that material). Supported on OpenGL, Vulkan and Direct3D 12 (the Direct3D 12 path is untested on Linux). Set `Material::pbr = true` yourself to use it on custom meshes. Non-glTF materials are unchanged.
 
 See `src/examples/ex3d_surface`, `src/examples/exmodel3d` and `src/examples/expbr`. glTF cameras/lights and morph targets are not supported.
+
+**Tiled planet textures (`PlanetTiles`).** Streams a Celestia-style virtual texture (a `.ctx` file or a folder of `levelN/tx_<col>_<row>.<ext>` tiles) onto a unit sphere. Each frame `update()` picks a quadtree of tiles from the camera, loads missing ones on worker threads (LRU cache, `max_cached_tiles`) and `draw()` renders them as sphere patches, so any backend works. Tiles may be PNG/JPG/DDS (DXT1, DXT3, DXT5, BC7). Levels may be sparse: a missing tile falls back to the nearest coarser one, but the coarsest level must be complete.
+
+```cpp
+sl::PlanetTilesOptions o;
+o.colour = "data/celestia/hires/earth/earth.ctx";   // or the folder
+o.specular = "data/celestia/hires/earth_specular";  // optional gloss map: white is shiny
+o.normal = "data/celestia/hires/earth_normal";      // optional
+auto earth = sl::PlanetTiles::create(o);            // nullptr on failure, see last_error()
+// each frame, with the planet's centre at the origin of 'model':
+earth->update(eye_in_planet_space, fov_y_radians, viewport_height, &view_projection);
+earth->draw(model, material);
+```
+
+Specular is drawn as an additive PBR pass tinted by `specular_strength`, with the gloss map inverted into roughness (floor `specular_min_roughness`). Limits: normal tiles apply only where a normal tile exists at the colour tile's level; level seams are hidden by skirts rather than stitched; tile size is detected from the first loaded tile. Direct3D 12 is untested. Related: `load_dds()` decodes BC2/DXT3 on the CPU and `AsyncBitmapOptions::invert` / `invert_floor` invert tiles on the worker. See `tests/planet_tiles_test.cpp` and `src/examples/exearth`, which takes the data paths on the command line (`exearth --colour <.ctx> [--specular <.ctx>] [--normal <.ctx>] --lat 51.06 --lon -4 --alt 6`) so no texture data lives in this repository.
 
 **Async loading.** `load_model_async()` and `load_bitmap_async()` decode on worker threads and upload on the main thread inside `end_frame()`, so large assets don't stall a frame.
 
@@ -1367,7 +1434,7 @@ sl::draw_mesh(houses, sl::model_matrix({0, 0, 0}, {0, 0, 0}));
 
 - Conventions: metres, +Y up, the base on `y = 0`, centred on x and z, and the front facing +Z. Fence, wall and container run along X; roads run along Z. `seed` varies colours, lit windows and small details deterministically. Parts are static.
 - Buildings: `make_house_data`, `make_office_data`, `make_skyscraper_data`, `make_hangar_data`.
-- Structures: `make_wall_data`, `make_fence_data`, `make_water_tower_data`, `make_radar_data`, `make_domed_radar_data`, `make_control_tower_data`, `make_street_lamp_data` (the lamp head glows at `(0, height, 0.9)`, the place for a local light), `make_road_data`.
+- Structures: `make_wall_data`, `make_fence_data`, `make_water_tower_data`, `make_radar_data`, `make_domed_radar_data`, `make_control_tower_data`, `make_pressure_dome_data`, `make_habitat_tube_data`, `make_lunar_rover_data`, `make_landing_pad_data` (airless-world base parts), `make_street_lamp_data` (the lamp head glows at `(0, height, 0.9)`, the place for a local light), `make_road_data`.
 - Small props: `make_barrel_data`, `make_crate_data`, `make_container_data`, `make_tank_data`.
 - Nature: `make_tree_data`, `make_conifer_data`, `make_bush_data`, `make_rock_data`, `make_rock_cluster_data`.
 - Vehicles: `make_car_data`, `make_spaceship_data`, `make_aeroplane_data`.

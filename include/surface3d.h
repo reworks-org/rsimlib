@@ -101,6 +101,11 @@ namespace sl
         /** Beyond fade_start the layers blend to their average colour, fully by fade_end (metres). */
         float fade_start = 0.0f;
         float fade_end = 0.0f;
+        /**
+         * Quaternion (x, y, z, w) the shaders turn mesh coordinates by before the model matrix (a rotating planet).
+         * Terrain::draw sets it; `eye` is then in world axes, relative to the chunk.
+         */
+        float rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         /** Not owned; must stay valid during the draw. */
         const TerrainTextures *textures = nullptr;
     };
@@ -199,6 +204,14 @@ namespace sl
     void end_surface_3d();
     /** Clear the active surface's colour and depth. */
     void clear_surface_3d(Colour colour);
+    /**
+     * Clear only the active surface's depth, keeping what is drawn. With set_camera_3d() this lets a scene be drawn in
+     * layers with different near and far planes: distant bodies first, then the nearby objects over them. Returns false
+     * (and clears nothing) on a backend that cannot.
+     */
+    bool clear_depth_3d();
+    /** Replace the camera used by the draws that follow, within begin_surface_3d() and end_surface_3d(). */
+    void set_camera_3d(const Camera &camera);
     /** Set the light used by lit materials on subsequent draws. */
     void set_light_3d(const Light3D &light);
     /** The light most recently passed to set_light_3d(). */

@@ -252,6 +252,88 @@ namespace sl::detail
                 return true;
             }
 
+            static GLenum compressed_gl_format(CompressedFormat format)
+            {
+                switch (format)
+                {
+                case CompressedFormat::bc1:
+                    return 0x83F1; // GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+                case CompressedFormat::bc3:
+                    return 0x83F3; // GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
+                default:
+                    return 0x8E8C; // GL_COMPRESSED_RGBA_BPTC_UNORM
+                }
+            }
+
+            bool supports_compressed_format(CompressedFormat format) const override
+            {
+                if (format == CompressedFormat::bc7)
+                    return SDL_GL_ExtensionSupported("GL_ARB_texture_compression_bptc") == SDL_TRUE;
+                return SDL_GL_ExtensionSupported("GL_EXT_texture_compression_s3tc") == SDL_TRUE;
+            }
+
+            bool create_texture_compressed(const CompressedTextureDesc &description, const std::uint8_t *data,
+                                           std::uint32_t &texture) override
+            {
+                texture = 0;
+                if (!data || compressed_texture_byte_count(description) == 0 || !supports_compressed_format(description.format))
+                    return false;
+                GLuint handle = 0;
+                glGenTextures(1, &handle);
+                if (handle == 0)
+                    return false;
+                GLint previous_active_texture = GL_TEXTURE0;
+                GLint previous_texture = 0;
+                GLint previous_unpack_buffer = 0;
+                glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
+                glActiveTexture(GL_TEXTURE0);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
+                glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &previous_unpack_buffer);
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+                glBindTexture(GL_TEXTURE_2D, handle);
+                const bool mipmapped = description.mip_levels > 1;
+                const GLint filter = description.filter == TextureFilter::linear ? GL_LINEAR : GL_NEAREST;
+                const GLint min_filter = !mipmapped ? filter
+                                         : description.filter == TextureFilter::linear ? GL_LINEAR_MIPMAP_LINEAR
+                                                                                       : GL_NEAREST_MIPMAP_NEAREST;
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, description.mip_levels - 1);
+                if (description.anisotropy > 1.0f && SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
+                {
+                    GLfloat max_anisotropy = 1.0f;
+                    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &max_anisotropy);
+                    if (glGetError() == GL_NO_ERROR && max_anisotropy > 1.0f)
+                        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                                        std::clamp(description.anisotropy, 1.0f, max_anisotropy));
+                }
+                std::size_t offset = 0;
+                for (int level = 0; level < description.mip_levels; ++level)
+                {
+                    const int width = std::max(description.width >> level, 1);
+                    const int height = std::max(description.height >> level, 1);
+                    const std::size_t bytes = compressed_level_byte_count(description.format, width, height);
+                    glCompressedTexImage2D(GL_TEXTURE_2D, level, compressed_gl_format(description.format), width, height, 0,
+                                           static_cast<GLsizei>(bytes), data + offset);
+                    offset += bytes;
+                }
+                const bool created = glGetError() == GL_NO_ERROR;
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(previous_unpack_buffer));
+                glActiveTexture(static_cast<GLenum>(previous_active_texture));
+                if (!created)
+                {
+                    glDeleteTextures(1, &handle);
+                    return false;
+                }
+                texture_sizes_[handle] = {description.width, description.height};
+                texture = handle;
+                return true;
+            }
+
             bool upload_texture(std::uint32_t texture, int width, int height,
                                 const std::uint8_t *pixels) override
             {
@@ -713,6 +795,25 @@ namespace sl::detail
                 return true;
             }
 
+            bool clear_depth_3d() override
+            {
+                flush_2d();
+                GLdouble previous_clear_depth = 1.0;
+                GLboolean previous_depth_mask = GL_TRUE;
+                const GLboolean scissor_was_enabled = glIsEnabled(GL_SCISSOR_TEST);
+                glGetDoublev(GL_DEPTH_CLEAR_VALUE, &previous_clear_depth);
+                glGetBooleanv(GL_DEPTH_WRITEMASK, &previous_depth_mask);
+                glDisable(GL_SCISSOR_TEST);
+                glDepthMask(GL_TRUE);
+                glClearDepth(1.0);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                glClearDepth(previous_clear_depth);
+                glDepthMask(previous_depth_mask);
+                if (scissor_was_enabled)
+                    glEnable(GL_SCISSOR_TEST);
+                return true;
+            }
+
             struct GLInstanceBuffer
             {
                 GLuint buffer = 0;
@@ -1043,6 +1144,8 @@ namespace sl::detail
                 glUniform1i(glGetUniformLocation(terrain_program_, "uNormals"), 1);
                 glUniformMatrix4fv(glGetUniformLocation(terrain_program_, "uMvp"), 1, GL_FALSE, params.mvp);
                 glUniform4fv(glGetUniformLocation(terrain_program_, "uTerrain"), 2, &params.normal_rows[1][0]);
+                glUniform4f(glGetUniformLocation(terrain_program_, "uTurn"), params.normal_rows[0][0], params.normal_rows[0][1],
+                            params.normal_rows[0][2], params.normal_rows[2][3]);
                 glUniform4fv(glGetUniformLocation(terrain_program_, "uLayers"), terrain_layer_count, &params.terrain_layers[0][0]);
                 glUniform4fv(glGetUniformLocation(terrain_program_, "uAverage"), terrain_layer_count, &params.terrain_average[0][0]);
                 glUniform4fv(glGetUniformLocation(terrain_program_, "uMacro"), 1, macro);

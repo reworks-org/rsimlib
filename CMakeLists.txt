@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(simlib LANGUAGES C CXX)
+if(WIN32)
+    enable_language(RC)
+endif()
 
 include(CTest)
 include(GNUInstallDirs)
@@ -10,7 +13,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
 endif()
 
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lib")
+# Pass -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=... to keep a second (e.g. cross-compiled) build out of the shared lib/.
+if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lib")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -295,7 +301,7 @@ FetchContent_Declare(
 set(BOX2D_BUILD_UNIT_TESTS OFF CACHE BOOL "Disable Box2D unit tests" FORCE)
 set(BOX2D_BUILD_TESTBED OFF CACHE BOOL "Disable Box2D testbed" FORCE)
 FetchContent_MakeAvailable(box2d)
-set_target_properties(box2d PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lib")
+set_target_properties(box2d PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}")
 if(NOT TARGET box2d::box2d)
     add_library(box2d::box2d ALIAS box2d)
 endif()
@@ -339,8 +345,11 @@ endif()
 
 add_library(simlib STATIC
     src/engine/display.cpp
+    src/engine/icon_data.cpp
     src/engine/event.cpp
     src/engine/draw.cpp
+    src/engine/dds.cpp
+    src/engine/planet_tiles.cpp
     src/engine/surface3d.cpp
     src/engine/model3d.cpp
     src/engine/model_gltf_writer.cpp
@@ -381,6 +390,7 @@ add_library(simlib STATIC
     src/engine/noise.cpp
     src/engine/fluid.cpp
     src/engine/fluid3d.cpp
+    src/engine/gas_vessel.cpp
     src/engine/gui.cpp
     src/engine/shader_paths.cpp
     src/engine/gl2d.cpp
@@ -389,7 +399,11 @@ add_library(simlib STATIC
     src/engine/async_load.cpp
     src/engine/parallel_record.cpp
     src/engine/physics.cpp
+    src/engine/physics3d.cpp
+    src/engine/proptree.cpp
+    src/engine/proptree_lua.cpp
     src/engine/flight.cpp
+    src/engine/hud.cpp
     src/engine/atmosphere.cpp
     src/engine/clutter.cpp
     src/engine/props3d.cpp
@@ -710,6 +724,9 @@ target_link_libraries(exclouds PRIVATE simlib)
 add_executable(expbr src/examples/expbr/expbr.cpp)
 target_link_libraries(expbr PRIVATE simlib)
 
+add_executable(exearth src/examples/exearth/exearth.cpp)
+target_link_libraries(exearth PRIVATE simlib)
+
 add_executable(exvoxel src/examples/exvoxel/exvoxel.cpp)
 target_link_libraries(exvoxel PRIVATE simlib)
 
@@ -781,6 +798,20 @@ add_executable(extilemap src/examples/extilemap/extilemap.cpp)
 target_link_libraries(extilemap PRIVATE simlib)
 add_executable(exxeno src/examples/exxeno/exxeno.cpp)
 target_link_libraries(exxeno PRIVATE simlib)
+add_executable(exinvaders src/examples/exinvaders/exinvaders.cpp)
+target_link_libraries(exinvaders PRIVATE simlib)
+add_executable(exdefender src/examples/exdefender/exdefender.cpp)
+target_link_libraries(exdefender PRIVATE simlib)
+add_executable(exasteroids src/examples/exasteroids/exasteroids.cpp)
+target_link_libraries(exasteroids PRIVATE simlib)
+# Each showcase game carries a major.build version in its VERSION file (see the Kosmos repo's scripts/publish-web.sh).
+foreach(_game exinvaders exdefender exasteroids)
+    set(_version_file "${CMAKE_CURRENT_SOURCE_DIR}/src/examples/${_game}/VERSION")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_version_file}")
+    file(STRINGS "${_version_file}" _version LIMIT_COUNT 1)
+    string(TOUPPER ${_game} _upper)
+    target_compile_definitions(${_game} PRIVATE ${_upper}_VERSION="${_version}")
+endforeach()
 add_executable(exnormalmap src/examples/exnormalmap/exnormalmap.cpp)
 target_link_libraries(exnormalmap PRIVATE simlib)
 add_executable(exnormalmap3d src/examples/exnormalmap3d/exnormalmap3d.cpp)
@@ -809,9 +840,13 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/examples/exreel/exreel.cpp)
         src/examples/exreel/scenes_new2d.cpp
         src/examples/exreel/scenes_new3d.cpp
         src/examples/exreel/scenes_sea.cpp
-        src/examples/exreel/scenes_saturn.cpp)
+        src/examples/exreel/scenes_saturn.cpp
+        src/examples/exreel/scenes_arcade_invaders.cpp
+        src/examples/exreel/scenes_arcade_defender.cpp
+        src/examples/exreel/scenes_arcade_asteroids.cpp)
     target_link_libraries(exreel PRIVATE simlib)
 endif()
+
 if(SIMLIB_GUI STREQUAL "imgui")
     add_executable(exlobby src/examples/exlobby/exlobby.cpp)
     target_link_libraries(exlobby PRIVATE simlib imgui)
@@ -874,6 +909,16 @@ if(BUILD_TESTING)
     target_compile_definitions(camera_collision_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
     add_test(NAME camera_collision COMMAND camera_collision_test)
 
+    add_executable(physics3d_test tests/physics3d_test.cpp)
+    target_link_libraries(physics3d_test PRIVATE simlib)
+    target_compile_definitions(physics3d_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME physics3d COMMAND physics3d_test)
+
+    add_executable(proptree_test tests/proptree_test.cpp)
+    target_link_libraries(proptree_test PRIVATE simlib)
+    target_compile_definitions(proptree_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME proptree COMMAND proptree_test)
+
     add_executable(props3d_test tests/props3d_test.cpp)
     target_link_libraries(props3d_test PRIVATE simlib)
     target_compile_definitions(props3d_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
@@ -909,6 +954,14 @@ if(BUILD_TESTING)
     target_link_libraries(hdr_test PRIVATE simlib)
     target_compile_definitions(hdr_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
     add_test(NAME hdr COMMAND hdr_test)
+    add_executable(planet_tiles_test tests/planet_tiles_test.cpp)
+    target_link_libraries(planet_tiles_test PRIVATE simlib)
+    target_compile_definitions(planet_tiles_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME planet_tiles COMMAND planet_tiles_test)
+    add_executable(dds_test tests/dds_test.cpp)
+    target_link_libraries(dds_test PRIVATE simlib)
+    target_compile_definitions(dds_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME dds COMMAND dds_test)
     add_executable(blend3d_test tests/blend3d_test.cpp)
     target_link_libraries(blend3d_test PRIVATE simlib)
     target_compile_definitions(blend3d_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
@@ -922,6 +975,12 @@ if(BUILD_TESTING)
     if(SIMLIB_RENDER_D3D12)
         add_test(NAME blend3d_d3d12 COMMAND blend3d_test --d3d12)
     endif()
+
+    add_executable(window_icon_test tests/window_icon_test.cpp)
+    target_link_libraries(window_icon_test PRIVATE simlib)
+    target_compile_definitions(window_icon_test PRIVATE SIMLIB_TEST_ICON="${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/simlib_icon.png"
+        $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME window_icon COMMAND window_icon_test)
 
     add_executable(parallel_record_test tests/parallel_record_test.cpp)
     target_link_libraries(parallel_record_test PRIVATE simlib)
@@ -1051,6 +1110,11 @@ if(BUILD_TESTING)
     target_compile_definitions(fluid3d_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
     add_test(NAME fluid3d COMMAND fluid3d_test)
 
+    add_executable(gas_vessel_test tests/gas_vessel_test.cpp)
+    target_link_libraries(gas_vessel_test PRIVATE simlib)
+    target_compile_definitions(gas_vessel_test PRIVATE $<$<PLATFORM_ID:Windows>:SDL_MAIN_HANDLED>)
+    add_test(NAME gas_vessel COMMAND gas_vessel_test)
+
     if(SIMLIB_RENDER_D3D12)
         add_executable(d3d12_renderer_test tests/d3d12_renderer_test.cpp)
         target_link_libraries(d3d12_renderer_test PRIVATE simlib)
@@ -1060,9 +1124,9 @@ if(BUILD_TESTING)
 
     # Tests rely on assert(); keep it active in Release builds, where NDEBUG would turn every check into a no-op.
     foreach(SIMLIB_TEST_TARGET
-            config_test isometric_test camera_collision_test props3d_test controls_test tilemap_test normalmap_test normalmap3d_test lights3d_test localshadow_test hdr_test rdb_test
+            config_test isometric_test camera_collision_test props3d_test controls_test tilemap_test normalmap_test normalmap3d_test lights3d_test localshadow_test hdr_test dds_test planet_tiles_test rdb_test
             backend_selection_test event_test lua_canvas_test resource_test physics_test
-            renderer_test voxel_test fluid3d_test flight_test terrain_test world_flavour_test net_test lobby_test pathfinder_test d3d12_renderer_test)
+            renderer_test voxel_test fluid3d_test gas_vessel_test flight_test terrain_test world_flavour_test net_test lobby_test pathfinder_test d3d12_renderer_test)
         if(TARGET ${SIMLIB_TEST_TARGET})
             if(MSVC)
                 # A force-included #undef avoids MSVC's D9025 warning that /UNDEBUG would trigger.
@@ -1126,7 +1190,23 @@ if(_sc_prefix AND EXISTS "${_sc_prefix}/bin/dxcompiler.dll")
 endif()
 include(cmake/SimlibPackage.cmake)
 
+# Windows: embed the default icon in every executable so Explorer and the taskbar show it (SDL reads resource ID 1).
+option(SIMLIB_EMBED_ICON "Embed the default simlib application icon in Windows executables" ON)
+if(WIN32 AND SIMLIB_EMBED_ICON)
+    get_directory_property(_simlib_icon_targets BUILDSYSTEM_TARGETS)
+    foreach(_t IN LISTS _simlib_icon_targets)
+        get_target_property(_type ${_t} TYPE)
+        if(_type STREQUAL "EXECUTABLE")
+            target_sources(${_t} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/simlib.rc")
+        endif()
+    endforeach()
+endif()
+install(FILES assets/icon/simlib_icon.png assets/icon/simlib.ico DESTINATION ${CMAKE_INSTALL_DATADIR}/simlib/icon)
+
 simlib_add_package(TARGET exxeno NAME exxeno-${CMAKE_SYSTEM_NAME} ASSETS assets)
+simlib_add_package(TARGET exinvaders NAME exinvaders-${CMAKE_SYSTEM_NAME})
+simlib_add_package(TARGET exdefender NAME exdefender-${CMAKE_SYSTEM_NAME})
+simlib_add_package(TARGET exasteroids NAME exasteroids-${CMAKE_SYSTEM_NAME})
 
 # simlib-demos-<system>.zip: every ex* example with the shared libraries, shaders and assets they need.
 get_directory_property(_simlib_all_targets BUILDSYSTEM_TARGETS)

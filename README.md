@@ -1,12 +1,8 @@
 # simlib
 
-[![simlib showreel 1 on YouTube: click to watch](docs/showreel1_thumbnail.png)](https://www.youtube.com/watch?v=D1dyvnGUUNw)
+[![simlib showreel 4 on YouTube: three neon voxel arcade games, click to watch](docs/showreel4_thumbnail.png)](https://www.youtube.com/watch?v=KE_AFGd7Tj0)
 
-**[Watch showreel 1](https://www.youtube.com/watch?v=D1dyvnGUUNw)**: a three-minute tour of simlib, rendered entirely by simlib itself.
-
-[![simlib showreel 2 on YouTube: click to watch](docs/showreel2_thumbnail.png)](https://www.youtube.com/watch?v=XAhfCniKO2k)
-
-**[Watch showreel 2](https://www.youtube.com/watch?v=XAhfCniKO2k)**: storms and warships, airliners, 3D cockpits and an orbital burn, again rendered entirely by simlib.
+**[Showreel 4](https://www.youtube.com/watch?v=KE_AFGd7Tj0)**: the three neon arcade games, [exinvaders](docs/examples/exinvaders.md), [exdefender](docs/examples/exdefender.md) and [exasteroids](docs/examples/exasteroids.md), each played by its own autoplay bot to a techno beat, rendered entirely by simlib itself with HDR bloom, emissive voxels and rigid-body debris.
 
 `simlib` is an easy-to-use, feature-rich C++ multimedia and rendering framework for 2D and 3D applications, with an Allegro 4-style API built on SDL2 and selectable OpenGL, Vulkan and Direct3D 12 backends.
 
@@ -236,7 +232,7 @@ If you only move the install, point `SIMLIB_DATA_DIR` at the new location or pla
 
 ### Distribute an Application
 
-`find_package(simlib)` also provides `simlib_add_package()`, which adds a `<target>_package` target that zips your executable with everything it needs at run time: shared libraries such as the SDL2 DLLs, simlib's shaders (including the compiled Vulkan SPIR-V), `dxcompiler.dll`/`dxil.dll` when known, your assets and the licences.
+`find_package(simlib)` also provides `simlib_add_package()`, which adds a `<target>_package` target that archives your executable with everything it needs at run time: shared libraries such as the SDL2 DLLs, simlib's shaders (including the compiled Vulkan SPIR-V), `dxcompiler.dll`/`dxil.dll` when known, your assets and the licences.
 
 ```cmake
 simlib_add_package(TARGET my_app NAME my_app-1.0-win64 ASSETS assets EXTRA_FILES README.txt)
@@ -246,7 +242,7 @@ simlib_add_package(TARGET my_app NAME my_app-1.0-win64 ASSETS assets EXTRA_FILES
 cmake --build build --config Release --target my_app_package   # -> build/package/my_app-1.0-win64.zip
 ```
 
-Unzip anywhere and run; simlib finds the shaders beside the executable. Set `SIMLIB_PACKAGE_DXC_DIR` to a folder holding the DXC DLLs if they are not detected. On Linux the system SDL2 libraries are not bundled. Vulkan users still need `vulkan-1.dll` from their GPU driver.
+The archive is a `.zip` on Windows and a `.tar.gz` elsewhere (override with `FORMAT zip|tar.gz`); `EXCLUDE <regex>...` leaves matching files out of `ASSETS`. Unpack anywhere and run; simlib finds the shaders beside the executable. Set `SIMLIB_PACKAGE_DXC_DIR` to a folder holding the DXC DLLs if they are not detected. On Linux the system SDL2 libraries are not bundled. Vulkan users still need `vulkan-1.dll` from their GPU driver.
 
 Run the test suite:
 
@@ -372,6 +368,9 @@ The full catalog of focused runnable examples follows.
 ./build/expathfinding   # Flow-field enemies (chase/scent/sound) with wall editing and heat-map overlays
 ./build/exanimsprite    # AnimationManager: looping, rotated, paused and one-shot animated sprites from an atlas
 ./build/exxeno         # Lit top-down shooter with tile-map decal splats (WASD + mouse)
+./build/exinvaders      # Space Invaders in glowing neon voxels with 3D debris physics (arrows + Space)
+./build/exasteroids    # Neon-voxel Asteroids: rocks split into lumps and a fading shower of voxels (arrows + Space)
+./build/exdefender      # Neon-voxel Defender: four-way momentum movement, radar, wraparound combat and rescues
 ./build/extilemap       # Scrolling tile map with collision and animated tiles (optionally a Tiled .tmj path)
 ./build/exconfig        # JSON configuration loading, saving, dotted keys, and live UI
 ./build/expostprocess   # Full post-processing effects and ping-pong chaining
@@ -444,6 +443,9 @@ Each entry links to its source and to a page with a screenshot, controls and key
 - **[`expathfinding`](src/examples/expathfinding/expathfinding.cpp)** — Enemies that never search: they read a chase distance field, then scent and sound layers from `Pathfinder`. Click to edit walls, Space to view each layer. [Screenshot & guide](docs/examples/expathfinding.md).
 - **[`exanimsprite`](src/examples/exanimsprite/exanimsprite.cpp)** — A procedural atlas driven by `AnimationManager`: sprites at different frame rates, a rotated sprite, pausing, and click-spawned one-shot explosions. [Screenshot & guide](docs/examples/exanimsprite.md).
 - **[`exxeno`](src/examples/exxeno/exxeno.cpp)** — Lit 2D shooter with synthesised sound effects and an adrenaline music loop: WASD and mouse aim, glowing bolts, particles, shadow-casting walls and acid splats stamped as tile-map decals. [Screenshot & guide](docs/examples/exxeno.md).
+- **[`exinvaders`](src/examples/exinvaders/exinvaders.cpp)** — Classic Space Invaders built from glowing voxels, seen side-on: eroding shields, bloom, additive missiles and explosions, and 3D rigid-body voxel debris from `RigidBoxWorld3D`. [Screenshot & guide](docs/examples/exinvaders.md).
+- **[`exasteroids`](src/examples/exasteroids/exasteroids.cpp)** — Neon-voxel Asteroids: lumpy 3D voxel rocks that split into two or three lumps and a fading shower of loose voxels (harmless; only the lumps hurt), thrust-and-inertia ship, wraparound field, bloom and synthesized sound. [Screenshot & guide](docs/examples/exasteroids.md).
+- **[`exdefender`](src/examples/exdefender/exdefender.cpp)** — A neon-voxel Defender-inspired arcade shooter: four-way wraparound movement with momentum, radar, alien waves, smart bombs, synthesized sound, rescues, bloom and tumbling 3D debris. [Screenshot & guide](docs/examples/exdefender.md).
 - **[`extilemap`](src/examples/extilemap/extilemap.cpp)** — Scrolling tile map with layers, collision, tile animation and Tiled JSON loading. [Screenshot & guide](docs/examples/extilemap.md).
 - **[`exconfig`](src/examples/exconfig/exconfig.cpp)** — JSON configuration loading, saving, dotted key paths, and typed getters/setters. [Screenshot & guide](docs/examples/exconfig.md).
 - **[`excompute`](src/examples/excompute/excompute.cpp)** — GPU compute shader particle simulation and SSBO data readback. [Screenshot & guide](docs/examples/excompute.md).
@@ -497,3 +499,30 @@ man 3 sl_Bitmap
 ```
 
 Add the `export MANPATH=...` line to your shell startup file to keep it across sessions.
+
+## Showreel Gallery
+
+Earlier films rendered entirely by simlib (the latest showreel is always at the top of this page). All of them are in the [simlib playlist on YouTube](https://www.youtube.com/playlist?list=PLUxsfSDozX5k).
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="https://www.youtube.com/watch?v=8g6SrcvGjKM"><img src="docs/showreel3_thumbnail.png" width="320" alt="simlib showreel 3 on YouTube: click to watch"></a><br>
+      <b><a href="https://www.youtube.com/watch?v=8g6SrcvGjKM">Showreel 3</a></b><br>
+      A Saturn V-style launch to orbit, with mountains, staging, stars and an ambient finale.
+    </td>
+    <td align="center" width="50%">
+      <a href="https://www.youtube.com/watch?v=XAhfCniKO2k"><img src="docs/showreel2_thumbnail.png" width="320" alt="simlib showreel 2 on YouTube: click to watch"></a><br>
+      <b><a href="https://www.youtube.com/watch?v=XAhfCniKO2k">Showreel 2</a></b><br>
+      Storms and warships, airliners, 3D cockpits and an orbital burn.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="https://www.youtube.com/watch?v=D1dyvnGUUNw"><img src="docs/showreel1_thumbnail.png" width="320" alt="simlib showreel 1 on YouTube: click to watch"></a><br>
+      <b><a href="https://www.youtube.com/watch?v=D1dyvnGUUNw">Showreel 1</a></b><br>
+      A three-minute tour of simlib.
+    </td>
+    <td></td>
+  </tr>
+</table>

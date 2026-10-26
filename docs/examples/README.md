@@ -13,6 +13,7 @@ Every graphical example with a screenshot, what it demonstrates, how to run it a
 | [![ex3d_surface](img/ex3d_surface.png)<br>**ex3d_surface**](ex3d_surface.md) | Backend-independent 3D with `Surface3D`: procedural meshes, an OBJ pyramid loaded from memory, lighting and MSAA, composited into the 2D screen. |
 | [![ex3d_vulkan](img/ex3d_vulkan.png)<br>**ex3d_vulkan**](ex3d_vulkan.md) | A minimal raw Vulkan 3D example: a spinning model drawn with Vulkan-specific buffers and shaders. Vulkan only. |
 | [![exanimsprite](img/exanimsprite.png)<br>**exanimsprite**](exanimsprite.md) | Animated sprites: looping sprites at different frame rates, a rotated pulsing bar, and click-to-spawn explosion rings. |
+| [![exasteroids](img/exasteroids.png)<br>**exasteroids**](exasteroids.md) | Neon-voxel Asteroids: lumpy voxel rocks split into lumps and a fading shower of loose voxels; only the lumps are a hazard. |
 | [![exatlas](img/exatlas.png)<br>**exatlas**](exatlas.md) | Texture atlas browser: pick a tile from a grid atlas and see it drawn at 4x next to the full atlas texture. |
 | [![exaudio](img/exaudio.png)<br>**exaudio**](exaudio.md) | Audio playback: sound effect samples, streamed music, pause and resume, and volume control. |
 | [![exbitmap](img/exbitmap.png)<br>**exbitmap**](exbitmap.md) | Bitmap loading and blitting: loads a PNG and blits it to the screen at 60 FPS. |
@@ -22,12 +23,13 @@ Every graphical example with a screenshot, what it demonstrates, how to run it a
 | [![excompute](img/excompute.png)<br>**excompute**](excompute.md) | GPU compute: a compute shader updates 1,000 particles stored in a shader storage buffer, then the results are read back and drawn. |
 | [![exconfig](img/exconfig.png)<br>**exconfig**](exconfig.md) | The JSON configuration subsystem (`sl::Config`): nested dotted-path keys and typed values edited live, saved to and loaded from `config_demo.json`. |
 | [![exdb](img/exdb.png)<br>**exdb**](exdb.md) | A small embedded database: opens a file, reads rows and lists them on screen. |
+| [![exdefender](img/exdefender.png)<br>**exdefender**](exdefender.md) | Neon-voxel arcade shooter with wraparound flight, alien waves, smart bombs, rescues and tumbling debris. |
 | [![execs](img/execs.png)<br>**execs**](execs.md) | A header-only archetype ECS (`recs.h`) driving thousands of simulated entities, rendered with simlib. |
 | [![exflight](img/exflight.png)<br>**exflight**](exflight.md) | Aircraft flight with `FlightWorld`: lifting and control surfaces, a jet engine, landing gear on a runway and an exponential atmosphere. |
 | [![exfluid3d](img/exfluid3d.png)<br>**exfluid3d**](exfluid3d.md) | 3D voxel fluid sandbox: spray materials into a voxel volume rendered as a mesh with an orbit camera. |
 | [![exfont](img/exfont.png)<br>**exfont**](exfont.md) | Loads TrueType fonts, measures text, and draws proportional and monospace samples side by side. |
 | [![exgpuparticles](img/exgpuparticles.png)<br>**exgpuparticles**](exgpuparticles.md) | 150,000 particles simulated entirely on the GPU by a compute shader, with gravity wells, explosions and an additive glow. |
-| [![exgui](img/exgui.png)<br>**exgui**](exgui.md) | Dear ImGui integration: the retained and debug GUI drawn on top of simlib, with the active backend and window size shown. |
+| [![exgui](img/exgui.png)<br>**exgui**](exgui.md) | Dear ImGui integration: an immediate-mode GUI (widgets, sliders, colour picker, demo and metrics windows) drawn on top of simlib, with the active backend and window size shown. |
 | [![exhello](img/exhello.png)<br>**exhello**](exhello.md) | The smallest simlib program: open a window, draw centred text on a cleared background, and wait for a key press. |
 | [![exinput](img/exinput.png)<br>**exinput**](exinput.md) | Input mapping: one `InputMap` binds keyboard, mouse and gamepad inputs to named actions, with live rebinding. |
 | [![exinstancing](img/exinstancing.png)<br>**exinstancing**](exinstancing.md) | Compares three ways to draw thousands of cubes: one call each, per-frame instance vectors, and a persistent `InstanceBuffer`. |

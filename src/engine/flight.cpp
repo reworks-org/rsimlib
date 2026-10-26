@@ -581,7 +581,7 @@ namespace sl
             if (rho > density)
             {
                 density = rho;
-                velocity = kin[j].velocity + glm::cross(dvec3(0.0, planet.spin_rate, 0.0), d);
+                velocity = kin[j].velocity + glm::cross(planet.spin_axis * planet.spin_rate, d);
             }
         }
     }
@@ -735,6 +735,8 @@ namespace sl
         {
             const FlightBody &b = bodies_[i];
             Kinematics &k = kin_[i];
+            if (b.terrain && (b.spin_rate != 0.0 || b.spin_phase != 0.0))
+                b.terrain->set_rotation(b.spin_phase + b.spin_rate * t, b.spin_axis);
             if (slot_[i] >= 0)
             {
                 const double *v = &y[slot_[i]];
@@ -825,6 +827,11 @@ namespace sl
 
         for (GearContact &g : b.gear)
         {
+            if (!g.enabled)
+            {
+                g.compression = 0.0;
+                continue;
+            }
             const dvec3 point = k.position + rot * g.position;
             const dvec3 point_velocity = k.velocity + rot * glm::cross(w, g.position);
             double compression = 0.0;
@@ -878,7 +885,7 @@ namespace sl
                 if (dist <= 0.0 || dist - ground >= 0.0)
                     continue;
                 contact(planet.terrain ? planet.terrain->normal_at_direction(d) : d / dist, dist - ground,
-                        kin[j].velocity + glm::cross(dvec3(0.0, planet.spin_rate, 0.0), d));
+                        kin[j].velocity + glm::cross(planet.spin_axis * planet.spin_rate, d));
             }
             if (record)
                 g.compression = compression;

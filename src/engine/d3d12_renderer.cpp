@@ -25,6 +25,9 @@
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -306,13 +309,83 @@ namespace sl::detail
         bool dxc_compile(const std::string &, const char *, ID3DBlob **, std::string &) { return false; }
 #endif
 
+        // Set SIMLIB_D3D12_TRACE=1 to log shader compilation and pipeline creation to stderr.
+        void trace(const char *format, ...)
+        {
+            static const bool enabled = std::getenv("SIMLIB_D3D12_TRACE") != nullptr;
+            if (!enabled)
+                return;
+            char text[512];
+            va_list args;
+            va_start(args, format);
+            std::vsnprintf(text, sizeof(text), format, args);
+            va_end(args);
+            std::fprintf(stderr, "[d3d12] %s\n", text);
+            std::fflush(stderr);
+        }
+
+        // With SIMLIB_D3D12_TRACE set, an unhandled crash reports its code and the faulting module and offset of each
+        // stack frame, so a bare "exit code 0xC0000005" can be traced back to a place in the code.
+        LONG WINAPI trace_crash_filter(EXCEPTION_POINTERS *info)
+        {
+            std::fprintf(stderr, "[d3d12] CRASH code 0x%08lX\n", static_cast<unsigned long>(info->ExceptionRecord->ExceptionCode));
+            if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && info->ExceptionRecord->NumberParameters >= 2)
+                std::fprintf(stderr, "[d3d12] access violation %s address 0x%p\n",
+                             info->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
+                             reinterpret_cast<void *>(info->ExceptionRecord->ExceptionInformation[1]));
+            const auto describe = [](void *address, const char *prefix)
+            {
+                HMODULE module = nullptr;
+                char name[MAX_PATH] = "?";
+                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       static_cast<LPCSTR>(address), &module))
+                    GetModuleFileNameA(module, name, sizeof(name));
+                const char *base = std::strrchr(name, '\\');
+                std::fprintf(stderr, "[d3d12]   %s %s+0x%llX\n", prefix, base ? base + 1 : name,
+                             static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address) -
+                                                              reinterpret_cast<std::uintptr_t>(module)));
+            };
+            describe(info->ExceptionRecord->ExceptionAddress, "at");
+            // The faulting thread's own stack, scanned for return addresses into this program and the driver: the
+            // exception dispatcher's frames hide the code that made the failing call.
+#if defined(_M_X64) || defined(__x86_64__)
+            const auto *stack = reinterpret_cast<const std::uintptr_t *>(info->ContextRecord->Rsp);
+            const HMODULE self = GetModuleHandleA(nullptr);
+            int shown = 0;
+            for (int i = 0; i < 4096 && shown < 40; ++i)
+            {
+                MEMORY_BASIC_INFORMATION memory{};
+                if (!VirtualQuery(stack + i, &memory, sizeof(memory)) || memory.State != MEM_COMMIT ||
+                    (memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+                    break;
+                void *value = reinterpret_cast<void *>(stack[i]);
+                HMODULE module = nullptr;
+                if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                        static_cast<LPCSTR>(value), &module))
+                    continue;
+                char name[MAX_PATH] = "";
+                GetModuleFileNameA(module, name, sizeof(name));
+                if (module == self || std::strstr(name, "nvwgf2") || std::strstr(name, "amdxc") || std::strstr(name, "ig"))
+                {
+                    describe(value, "stack");
+                    ++shown;
+                }
+            }
+#endif
+            std::fflush(stderr);
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
         // Compiles translated HLSL with DXC (shader model 6) when available, otherwise fxc (shader model 5.1).
         bool compile_program_shader(ID3D12Device *device, const std::string &source, const char *stage,
                                     ID3DBlob **blob, std::string &error)
         {
-            if (dxc_available(device))
-                return dxc_compile(source, stage, blob, error);
-            return compile_shader(source, "main", (std::string(stage) + "_5_1").c_str(), blob, error);
+            const bool dxc = dxc_available(device);
+            trace("compile %s with %s", stage, dxc ? "DXC (sm 6_0)" : "FXC (sm 5_1)");
+            const bool ok = dxc ? dxc_compile(source, stage, blob, error)
+                                : compile_shader(source, "main", (std::string(stage) + "_5_1").c_str(), blob, error);
+            trace("compile %s %s%s%s", stage, ok ? "ok" : "FAILED: ", ok ? "" : error.c_str(), "");
+            return ok;
         }
 
         // Drivers sometimes reject DXC-built DXIL at pipeline creation; fxc's shader model 5.1 is the safe fallback.
@@ -364,6 +437,8 @@ namespace sl::detail
             bool initialise(SDL_Window *window, std::string &error) override
             {
                 window_ = window;
+                if (std::getenv("SIMLIB_D3D12_TRACE"))
+                    SetUnhandledExceptionFilter(trace_crash_filter);
                 return context_.initialise(window, error);
             }
 
@@ -544,6 +619,12 @@ namespace sl::detail
                     sampler_heap_->Release();
                 if (srv_heap_)
                     srv_heap_->Release();
+                if (sampler_staging_heap_)
+                    sampler_staging_heap_->Release();
+                if (srv_staging_heap_)
+                    srv_staging_heap_->Release();
+                sampler_staging_heap_ = nullptr;
+                srv_staging_heap_ = nullptr;
                 if (render_target_heap_)
                     render_target_heap_->Release();
                 if (depth_stencil_heap_)
@@ -573,8 +654,16 @@ namespace sl::detail
             void present() override
             {
                 flush_2d();
+                static int traced_presents = 0;
+                const bool log_present = traced_presents < 3;
+                if (log_present)
+                    trace("present %d: suspend render target", traced_presents);
                 suspend_active_render_target();
+                if (log_present)
+                    trace("present %d: submit and flip", traced_presents);
                 context_.present(vsync_enabled_);
+                if (log_present)
+                    trace("present %d: done", traced_presents++);
                 release_retired_textures();
                 if (shutdown_2d_pending_)
                     release_2d_resources();
@@ -607,6 +696,14 @@ namespace sl::detail
 
             bool create_texture(const TextureDesc &description, std::uint32_t &texture) override
             {
+                return create_texture_impl(description, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                           description.mipmaps ? mip_level_count(description.width, description.height) : 1,
+                                           true, texture);
+            }
+
+            bool create_texture_impl(const TextureDesc &description, DXGI_FORMAT format, int mip_levels, bool allow_uav,
+                                     std::uint32_t &texture)
+            {
                 texture = 0;
                 if (description.width <= 0 || description.height <= 0 ||
                     !std::isfinite(description.anisotropy) ||
@@ -622,14 +719,13 @@ namespace sl::detail
                 resource_desc.Width = static_cast<UINT64>(description.width);
                 resource_desc.Height = static_cast<UINT>(description.height);
                 resource_desc.DepthOrArraySize = 1;
-                resource_desc.MipLevels = static_cast<UINT16>(
-                    description.mipmaps ? mip_level_count(description.width, description.height) : 1);
-                resource_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                resource_desc.MipLevels = static_cast<UINT16>(mip_levels);
+                resource_desc.Format = format;
                 resource_desc.SampleDesc.Count = 1;
                 resource_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
                 resource_desc.Flags = (description.render_target ? D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET
                                                                   : D3D12_RESOURCE_FLAG_NONE) |
-                                      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+                                      (allow_uav ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
                 Texture resource;
                 resource.descriptor = descriptor;
                 const D3D12_HEAP_PROPERTIES default_heap = heap_properties(D3D12_HEAP_TYPE_DEFAULT);
@@ -645,11 +741,17 @@ namespace sl::detail
 
                 D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
                 srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-                srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                srv_desc.Format = format;
                 srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
                 srv_desc.Texture2D.MipLevels = resource_desc.MipLevels;
+                // Descriptors are authored in a CPU-only staging heap and mirrored into the shader-visible heap: copying
+                // out of a shader-visible heap is not allowed and crashes NVIDIA's driver.
                 context_.device()->CreateShaderResourceView(
-                    resource.resource, &srv_desc, cpu_descriptor(srv_heap_, srv_descriptor_size_, descriptor));
+                    resource.resource, &srv_desc, cpu_descriptor(srv_staging_heap_, srv_descriptor_size_, descriptor));
+                context_.device()->CopyDescriptorsSimple(
+                    1, cpu_descriptor(srv_heap_, srv_descriptor_size_, descriptor),
+                    cpu_descriptor(srv_staging_heap_, srv_descriptor_size_, descriptor),
+                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
                 const bool use_anisotropy = description.anisotropy > 1.0f && description.filter == TextureFilter::linear;
                 const UINT max_anisotropy = use_anisotropy ? static_cast<UINT>(std::clamp(description.anisotropy, 1.0f, 16.0f)) : 1u;
@@ -673,7 +775,11 @@ namespace sl::detail
                     sampler_desc.MaxLOD = D3D12_FLOAT32_MAX;
                     resource.sampler = static_cast<std::uint32_t>(sampler_slots_.size());
                     context_.device()->CreateSampler(
-                        &sampler_desc, cpu_descriptor(sampler_heap_, sampler_descriptor_size_, resource.sampler));
+                        &sampler_desc, cpu_descriptor(sampler_staging_heap_, sampler_descriptor_size_, resource.sampler));
+                    context_.device()->CopyDescriptorsSimple(
+                        1, cpu_descriptor(sampler_heap_, sampler_descriptor_size_, resource.sampler),
+                        cpu_descriptor(sampler_staging_heap_, sampler_descriptor_size_, resource.sampler),
+                        D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
                     sampler_slots_.emplace(sampler_key, resource.sampler);
                 }
 
@@ -730,6 +836,14 @@ namespace sl::detail
                     }
                 }
 
+                return upload_subresources(found->second, level_pixels, level_row_bytes);
+            }
+
+            bool upload_subresources(Texture &target, const std::vector<const std::uint8_t *> &level_pixels,
+                                     const std::vector<std::size_t> &level_row_bytes)
+            {
+                D3D12_RESOURCE_DESC destination_desc = target.resource->GetDesc();
+                const UINT level_count = destination_desc.MipLevels;
                 std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(level_count);
                 std::vector<UINT> row_counts(level_count);
                 std::vector<UINT64> unpadded_row_sizes(level_count);
@@ -784,9 +898,9 @@ namespace sl::detail
                     return false;
                 }
 
-                const D3D12_RESOURCE_STATES previous_state = found->second.state;
+                const D3D12_RESOURCE_STATES previous_state = target.state;
                 if (previous_state != D3D12_RESOURCE_STATE_COPY_DEST)
-                    transition_resource(commands, found->second.resource, previous_state,
+                    transition_resource(commands, target.resource, previous_state,
                                         D3D12_RESOURCE_STATE_COPY_DEST);
                 for (UINT level = 0; level < level_count; ++level)
                 {
@@ -795,12 +909,12 @@ namespace sl::detail
                     source_location.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
                     source_location.PlacedFootprint = footprints[level];
                     D3D12_TEXTURE_COPY_LOCATION destination_location{};
-                    destination_location.pResource = found->second.resource;
+                    destination_location.pResource = target.resource;
                     destination_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
                     destination_location.SubresourceIndex = level;
                     commands->CopyTextureRegion(&destination_location, 0, 0, 0, &source_location, nullptr);
                 }
-                transition_resource(commands, found->second.resource,
+                transition_resource(commands, target.resource,
                                     D3D12_RESOURCE_STATE_COPY_DEST,
                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 result = commands->Close();
@@ -816,7 +930,74 @@ namespace sl::detail
                 upload->Release();
                 if (FAILED(result))
                     return false;
-                found->second.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                target.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                return true;
+            }
+
+            static DXGI_FORMAT compressed_dxgi_format(CompressedFormat format)
+            {
+                switch (format)
+                {
+                case CompressedFormat::bc1:
+                    return DXGI_FORMAT_BC1_UNORM;
+                case CompressedFormat::bc3:
+                    return DXGI_FORMAT_BC3_UNORM;
+                default:
+                    return DXGI_FORMAT_BC7_UNORM;
+                }
+            }
+
+            bool supports_compressed_format(CompressedFormat) const override { return context_.device() != nullptr; }
+
+            bool create_texture_compressed(const CompressedTextureDesc &description, const std::uint8_t *data,
+                                           std::uint32_t &texture) override
+            {
+                texture = 0;
+                if (!data || compressed_texture_byte_count(description) == 0)
+                    return false;
+                TextureDesc base;
+                base.width = description.width;
+                base.height = description.height;
+                base.filter = description.filter;
+                base.anisotropy = description.anisotropy;
+                std::uint32_t handle = 0;
+                if (!create_texture_impl(base, compressed_dxgi_format(description.format), description.mip_levels, false, handle))
+                    return false;
+                const auto found = textures_.find(handle);
+                if (found == textures_.end())
+                    return false;
+                if (context_.frame_open())
+                {
+                    flush_2d();
+                    if (!context_.execute_with(nullptr, 0))
+                    {
+                        destroy_texture(handle);
+                        return false;
+                    }
+                    rebind_frame_targets();
+                }
+                if (!context_.wait_idle())
+                {
+                    destroy_texture(handle);
+                    return false;
+                }
+                std::vector<const std::uint8_t *> level_pixels;
+                std::vector<std::size_t> level_row_bytes;
+                std::size_t offset = 0;
+                for (int level = 0; level < description.mip_levels; ++level)
+                {
+                    const int width = (std::max)(description.width >> level, 1);
+                    const int height = (std::max)(description.height >> level, 1);
+                    level_pixels.push_back(data + offset);
+                    level_row_bytes.push_back(compressed_level_byte_count(description.format, width, 4) );
+                    offset += compressed_level_byte_count(description.format, width, height);
+                }
+                if (!upload_subresources(found->second, level_pixels, level_row_bytes))
+                {
+                    destroy_texture(handle);
+                    return false;
+                }
+                texture = handle;
                 return true;
             }
 
@@ -1614,6 +1795,20 @@ namespace sl::detail
                     depth, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
                 return true;
             }
+            bool clear_depth_3d() override
+            {
+                if (active_render_target_ == 0 || !ensure_frame())
+                    return false;
+                const auto target = render_targets_.find(active_render_target_);
+                if (target == render_targets_.end() || !target->second.depth)
+                    return false;
+                flush_2d();
+                D3D12_CPU_DESCRIPTOR_HANDLE depth =
+                    cpu_descriptor(depth_stencil_heap_, depth_stencil_descriptor_size_,
+                                   target->second.depth_descriptor);
+                context_.command_list()->ClearDepthStencilView(depth, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                return true;
+            }
             bool create_shader(const ShaderSource &vertex_source, const ShaderSource &fragment_source,
                                std::uint32_t &handle, std::string &error) override
             {
@@ -1707,6 +1902,7 @@ namespace sl::detail
                 desc.CS = {program.compute_blob->GetBufferPointer(), program.compute_blob->GetBufferSize()};
                 HRESULT pipeline_result =
                     context_.device()->CreateComputePipelineState(&desc, IID_PPV_ARGS(&program.compute_pipeline));
+                trace("compute pipeline HRESULT 0x%08lX", static_cast<unsigned long>(pipeline_result));
                 if (FAILED(pipeline_result) && dxc_available(context_.device()) &&
                     program.samplers.size() <= max_program_samplers_sm5)
                 {
@@ -1798,6 +1994,9 @@ namespace sl::detail
                 if (!bind_program_resources(program, false))
                     return false;
                 commands->Dispatch(groups_x, groups_y, groups_z);
+                static int traced_dispatches = 0;
+                if (traced_dispatches++ < 3)
+                    trace("dispatch recorded");
                 restore_image_textures();
                 D3D12_RESOURCE_BARRIER barrier{};
                 barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
@@ -2191,6 +2390,12 @@ namespace sl::detail
                 vertex_view.StrideInBytes = sizeof(Vertex2D);
                 commands->IASetVertexBuffers(0, 1, &vertex_view);
                 commands->IASetPrimitiveTopology(topology);
+                static int traced_draws = 0;
+                if (traced_draws < 6 || (active_program_ != 0 && traced_draws < 40))
+                {
+                    ++traced_draws;
+                    trace("draw 2d: %zu vertices%s", count, active_program_ != 0 ? " (user shader)" : "");
+                }
                 commands->DrawInstanced(static_cast<UINT>(count), 1, 0, 0);
                 restore_image_textures();
                 batch_vertices_.clear();
@@ -2991,7 +3196,7 @@ namespace sl::detail
 
             bool ensure_descriptor_heaps()
             {
-                if (srv_heap_ && sampler_heap_)
+                if (srv_heap_ && sampler_heap_ && srv_staging_heap_ && sampler_staging_heap_)
                     return true;
                 D3D12_DESCRIPTOR_HEAP_DESC desc{};
                 desc.NumDescriptors = descriptor_capacity + transient_descriptor_capacity;
@@ -3007,6 +3212,27 @@ namespace sl::detail
                 {
                     srv_heap_->Release();
                     srv_heap_ = nullptr;
+                    return false;
+                }
+                D3D12_DESCRIPTOR_HEAP_DESC staging{};
+                staging.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+                staging.NumDescriptors = descriptor_capacity;
+                staging.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+                result = context_.device()->CreateDescriptorHeap(&staging, IID_PPV_ARGS(&srv_staging_heap_));
+                if (SUCCEEDED(result))
+                {
+                    staging.NumDescriptors = persistent_sampler_capacity;
+                    staging.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+                    result = context_.device()->CreateDescriptorHeap(&staging, IID_PPV_ARGS(&sampler_staging_heap_));
+                }
+                if (FAILED(result))
+                {
+                    for (ID3D12DescriptorHeap **heap : {&srv_heap_, &sampler_heap_, &srv_staging_heap_, &sampler_staging_heap_})
+                    {
+                        if (*heap)
+                            (*heap)->Release();
+                        *heap = nullptr;
+                    }
                     return false;
                 }
                 srv_descriptor_size_ =
@@ -3469,11 +3695,11 @@ namespace sl::detail
                             return false;
                         context_.device()->CopyDescriptorsSimple(
                             1, cpu_descriptor(srv_heap_, srv_descriptor_size_, texture_base + slot),
-                            cpu_descriptor(srv_heap_, srv_descriptor_size_, texture->second.descriptor),
+                            cpu_descriptor(srv_staging_heap_, srv_descriptor_size_, texture->second.descriptor),
                             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
                         context_.device()->CopyDescriptorsSimple(
                             1, cpu_descriptor(sampler_heap_, sampler_descriptor_size_, sampler_base + slot),
-                            cpu_descriptor(sampler_heap_, sampler_descriptor_size_, texture->second.sampler),
+                            cpu_descriptor(sampler_staging_heap_, sampler_descriptor_size_, texture->second.sampler),
                             D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
                     }
                     set_table(program.texture_parameter_base,
@@ -3550,7 +3776,9 @@ namespace sl::detail
                 D3D12_GRAPHICS_PIPELINE_STATE_DESC desc =
                     make_2d_pipeline_desc(program.root_signature, program.vertex_blob, program.pixel_blob,
                                           primitive, variant, elements, static_cast<UINT>(std::size(elements)), samples);
-                if (!create_pipeline_state(desc, slot) && !program.fxc_fallback && dxc_available(context_.device()) &&
+                if (!create_pipeline_state(desc, slot))
+                    trace("graphics pipeline for user shader FAILED (dxc=%d)", dxc_available(context_.device()) ? 1 : 0);
+                if (!slot && !program.fxc_fallback && dxc_available(context_.device()) &&
                     program.samplers.size() <= max_program_samplers_sm5)
                 {
                     ID3DBlob *vertex_fallback = nullptr;
@@ -3656,6 +3884,8 @@ namespace sl::detail
             bool initialized_2d_ = false;
             bool shutdown_2d_pending_ = false;
             ID3D12DescriptorHeap *srv_heap_ = nullptr;
+            ID3D12DescriptorHeap *srv_staging_heap_ = nullptr;
+            ID3D12DescriptorHeap *sampler_staging_heap_ = nullptr;
             ID3D12DescriptorHeap *sampler_heap_ = nullptr;
             std::unordered_map<std::uint32_t, std::uint32_t> sampler_slots_;
             ID3D12DescriptorHeap *render_target_heap_ = nullptr;

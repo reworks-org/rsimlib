@@ -1,5 +1,6 @@
 build
 build-verify
+build-win
 build-spv
 html
 imgui.ini
@@ -31,3 +32,4 @@ fullbuild.bat
 /docs/examples/exreel.md
 /tools/render_reel.sh
 reel.*
+release.sh
