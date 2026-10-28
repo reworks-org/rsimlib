@@ -3,7 +3,6 @@
 #include "atmosphere_internal.h"
 #include "deferred_mesh.h"
 #include "error.h"
-#include "frame_stats.h"
 #include "renderer.h"
 
 #include <glm/gtc/constants.hpp>
@@ -777,9 +776,9 @@ namespace sl
             params.light[1] = to_light.y;
             params.light[2] = to_light.z;
             params.light[3] = current_light.ambient;
-            params.light_colour[0] = current_light.colour.r;
-            params.light_colour[1] = current_light.colour.g;
-            params.light_colour[2] = current_light.colour.b;
+            params.light_colour[0] = current_light.colour.x;
+            params.light_colour[1] = current_light.colour.y;
+            params.light_colour[2] = current_light.colour.z;
         }
         else
         {
@@ -835,9 +834,9 @@ namespace sl
                 packed[0][1] = l.position.y;
                 packed[0][2] = l.position.z;
                 packed[0][3] = std::max(l.range, 1.0e-3f);
-                packed[1][0] = l.colour.r * scale;
-                packed[1][1] = l.colour.g * scale;
-                packed[1][2] = l.colour.b * scale;
+                packed[1][0] = l.colour.x * scale;
+                packed[1][1] = l.colour.y * scale;
+                packed[1][2] = l.colour.z * scale;
                 packed[1][3] = -1.0f;
                 packed[2][0] = packed[2][1] = packed[2][2] = packed[2][3] = 0.0f;
                 packed[3][0] = -1.0f;
@@ -902,16 +901,6 @@ namespace sl
             detail::set_error("Unable to draw mesh on the active graphics backend");
             return false;
         }
-        detail::FrameCounters &counters = detail::frame_counters();
-        if (instance_buffer != 0)
-        {
-            ++counters.instanced_draws;
-            counters.instances += instance_count;
-        }
-        else
-            ++counters.mesh_draws;
-        if (params.blend != 0)
-            ++counters.blended_draws;
         return true;
     }
 

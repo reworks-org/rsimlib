@@ -22,9 +22,20 @@ namespace sl
 {
     namespace detail
     {
-        glm::mat4 model_animation_transform(const Model &model, const ModelPart &part);
-        bool model_part_visible(const Model &model, const ModelPart &part);
-        float model_animation_alpha(const Model &model, const ModelPart &part);
+		glm::mat4 model_animation_transform(const Model& model, const ModelPart& part)
+		{
+			return {};
+		}
+
+		bool model_part_visible(const Model& model, const ModelPart& part)
+		{
+			return false;
+		}
+
+		float model_animation_alpha(const Model& model, const ModelPart& part)
+		{
+			return 1.0f;
+		}
     }
 
     namespace

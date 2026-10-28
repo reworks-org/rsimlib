@@ -9,7 +9,6 @@
 #include "parallel_render.h"
 #include "display.h"
 #include "font.h"
-#include "frame_stats.h"
 #include "renderer.h"
 
 namespace sl
