@@ -27,8 +27,6 @@ namespace sl
     Font *open_font(const std::string &path, int pointSize);
     /** Open a font from memory. */
     Font *open_font_from_memory(const std::uint8_t *data, std::size_t size, int pointSize);
-    /** Open a font entry from a ZIP archive. */
-    Font *open_font(const Archive &archive, const std::string &name, int pointSize);
     /** Close a font returned by an open_font or open_*_font function. */
     void close_font(Font *font);
     /** Return the rendered width of UTF-8 text in pixels. */

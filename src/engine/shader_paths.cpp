@@ -1,6 +1,6 @@
 #include "shader_paths.h"
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 #include <system_error>
 
@@ -20,10 +20,9 @@ namespace sl::detail
             if (const char *env = SDL_getenv("SIMLIB_DATA_DIR"))
                 add(env);
 
-            if (char *base = SDL_GetBasePath())
+            if (const char *base = SDL_GetBasePath())
             {
                 const std::filesystem::path exe_dir = base;
-                SDL_free(base);
                 add(exe_dir);
                 add(exe_dir / "share" / "simlib");
                 add(exe_dir / ".." / "share" / "simlib");

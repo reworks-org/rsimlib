@@ -7,7 +7,6 @@
 #include "display.h"
 #include "error.h"
 #include "gl2d.h"
-#include "resource.h"
 
 #include <filesystem>
 #include <fstream>
@@ -132,12 +131,12 @@ namespace
 
         GlyphInfo info;
         std::uint32_t source = code;
-        if (code != 32 && !TTF_GlyphIsProvided32(atlas.font, code))
-            source = TTF_GlyphIsProvided32(atlas.font, '?') ? '?' : 0;
+		if (code != 32 && !TTF_FontHasGlyph(atlas.font, code))
+            source = TTF_FontHasGlyph(atlas.font, '?') ? '?' : 0;
         if (source != 0)
         {
             int minx = 0, maxx = 0, miny = 0, maxy = 0, advance = 0;
-            if (TTF_GlyphMetrics32(atlas.font, source, &minx, &maxx, &miny, &maxy, &advance) == 0)
+            if (TTF_GetGlyphMetrics(atlas.font, source, &minx, &maxx, &miny, &maxy, &advance) == 0)
             {
                 info.min_x = minx;
                 info.max_x = maxx;
@@ -151,10 +150,10 @@ namespace
         SDL_Surface *rgba = nullptr;
         if (info.exists && source != 32)
         {
-            if (SDL_Surface *surface = TTF_RenderGlyph32_Blended(atlas.font, source, SDL_Color{255, 255, 255, 255}))
+            if (SDL_Surface *surface = TTF_RenderGlyph_Blended(atlas.font, source, SDL_Color{255, 255, 255, 255}))
             {
-                rgba = SDL_ConvertSurfaceFormat(surface, SDL_PIXELFORMAT_RGBA32, 0);
-                SDL_FreeSurface(surface);
+                rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+                SDL_DestroySurface(surface);
             }
         }
 
@@ -170,7 +169,7 @@ namespace
             {
                 if (atlas.atlas_height * 2 > renderer.max_texture_size())
                 {
-                    SDL_FreeSurface(rgba);
+                    SDL_DestroySurface(rgba);
                     atlas.glyphs[code] = GlyphInfo{};
                     return nullptr;
                 }
@@ -199,7 +198,7 @@ namespace
             atlas.dirty = true;
         }
         if (rgba)
-            SDL_FreeSurface(rgba);
+            SDL_DestroySurface(rgba);
 
         const GlyphInfo &stored = atlas.glyphs[code] = info;
         return stored.exists ? &stored : nullptr;
@@ -239,9 +238,9 @@ namespace
 
         auto atlas = std::make_unique<FontAtlas>();
         atlas->font = font;
-        atlas->ascent = TTF_FontAscent(font);
-        atlas->descent = TTF_FontDescent(font);
-        atlas->line_skip = TTF_FontLineSkip(font);
+        atlas->ascent = TTF_GetFontAscent(font);
+        atlas->descent = TTF_GetFontDescent(font);
+        atlas->line_skip = TTF_GetFontLineSkip(font);
         atlas->pixels.assign(static_cast<std::size_t>(atlas->atlas_width) * atlas->atlas_height * 4, 0);
         for (std::uint32_t ch = 32; ch <= 126; ++ch)
             font_atlas_glyph(*atlas, *renderer, ch);
@@ -261,15 +260,15 @@ namespace
     std::optional<TextTexture> build_text_texture(Font *font, const std::string &text, const Colour &colour)
     {
         const SDL_Color sdlColor{colour.red, colour.green, colour.blue, colour.alpha};
-        SDL_Surface *rendered = TTF_RenderUTF8_Blended(font, text.c_str(), sdlColor);
+        SDL_Surface *rendered = TTF_RenderText_Blended(font, text.c_str(), text.size(), sdlColor);
         if (!rendered)
         {
-            sl::detail::set_error(TTF_GetError());
+            sl::detail::set_error(SDL_GetError());
             return std::nullopt;
         }
 
-        SDL_Surface *rgba = SDL_ConvertSurfaceFormat(rendered, SDL_PIXELFORMAT_RGBA32, 0);
-        SDL_FreeSurface(rendered);
+        SDL_Surface *rgba = SDL_ConvertSurface(rendered, SDL_PIXELFORMAT_RGBA32, 0);
+        SDL_DestroySurface(rendered);
         if (!rgba)
         {
             sl::detail::set_error(SDL_GetError());
@@ -287,11 +286,11 @@ namespace
         {
             if (renderer)
                 renderer->destroy_texture(texture.id);
-            SDL_FreeSurface(rgba);
+            SDL_DestroySurface(rgba);
             return std::nullopt;
         }
 
-        SDL_FreeSurface(rgba);
+        SDL_DestroySurface(rgba);
         return texture;
     }
 
@@ -477,10 +476,9 @@ namespace
     std::vector<std::filesystem::path> bundled_font_candidates(const char *name)
     {
         std::vector<std::filesystem::path> paths;
-        if (char *base = SDL_GetBasePath())
+        if (const char *base = SDL_GetBasePath())
         {
             paths.push_back(std::filesystem::path(base) / "assets" / "fonts" / name);
-            SDL_free(base);
         }
         paths.push_back(std::filesystem::path("assets") / "fonts" / name);
         paths.push_back(std::filesystem::path("..") / "assets" / "fonts" / name);
@@ -586,7 +584,7 @@ namespace
     {
         Font *font = TTF_OpenFont(path.c_str(), pointSize);
         if (!font)
-            sl::detail::set_error(TTF_GetError());
+            sl::detail::set_error(SDL_GetError());
         return font;
     }
 
@@ -597,14 +595,8 @@ namespace
         SDL_RWops *rw = SDL_RWFromConstMem(data, static_cast<int>(size));
         Font *font = rw ? TTF_OpenFontRW(rw, 1, pointSize) : nullptr;
         if (!font)
-            sl::detail::set_error(TTF_GetError());
+            sl::detail::set_error(SDL_GetError());
         return font;
-    }
-
-    Font *open_font(const Archive &archive, const std::string &name, int pointSize)
-    {
-        const auto bytes = archive.read(name);
-        return open_font_from_memory(bytes.data(), bytes.size(), pointSize);
     }
 
     void close_font(Font *font)
@@ -620,12 +612,12 @@ namespace
     {
         int width = 0;
         int height = 0;
-        return font && TTF_SizeUTF8(font, text.c_str(), &width, &height) == 0 ? width : 0;
+        return font && TTF_GetStringSize(font, text.c_str(), text.size(), &width, &height) == 0 ? width : 0;
     }
 
     int text_height(Font *font)
     {
-        return font ? TTF_FontHeight(font) : 0;
+        return font ? TTF_GetFontHeight(font) : 0;
     }
 
     struct TextCache

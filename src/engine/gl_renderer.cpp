@@ -8,7 +8,7 @@
 
 #include <glad/glad.h>
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cmath>
@@ -152,16 +152,6 @@ namespace sl::detail
                 return context_.resize(width, height, error);
             }
 
-            bool set_vsync(bool enabled) override
-            {
-                return context_.set_vsync(enabled);
-            }
-
-            bool vsync_active() const override
-            {
-                return context_.vsync_active();
-            }
-
             void present() override
             {
                 flush_2d();
@@ -268,8 +258,8 @@ namespace sl::detail
             bool supports_compressed_format(CompressedFormat format) const override
             {
                 if (format == CompressedFormat::bc7)
-                    return SDL_GL_ExtensionSupported("GL_ARB_texture_compression_bptc") == SDL_TRUE;
-                return SDL_GL_ExtensionSupported("GL_EXT_texture_compression_s3tc") == SDL_TRUE;
+                    return SDL_GL_ExtensionSupported("GL_ARB_texture_compression_bptc");
+                return SDL_GL_ExtensionSupported("GL_EXT_texture_compression_s3tc");
             }
 
             bool create_texture_compressed(const CompressedTextureDesc &description, const std::uint8_t *data,

@@ -1,5 +1,5 @@
 /** @file
- * @brief Owns the SDL/OpenGL context lifecycle: creation, viewport, vsync, and swap.
+ * @brief Owns the SDL/OpenGL context lifecycle: creation, viewport, and swap.
  */
 #include "gl_context.h"
 
@@ -53,16 +53,6 @@ namespace sl::detail
         }
         glViewport(0, 0, width, height);
         return true;
-    }
-
-    bool GLContext::set_vsync(bool enabled)
-    {
-        return context_ && SDL_GL_SetSwapInterval(enabled ? 1 : 0) == 0;
-    }
-
-    bool GLContext::vsync_active() const
-    {
-        return context_ && SDL_GL_GetSwapInterval() != 0;
     }
 
     void GLContext::present()

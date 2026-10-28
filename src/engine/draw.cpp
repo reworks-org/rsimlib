@@ -8,12 +8,7 @@
 #include "display.h"
 #include "error.h"
 #include "gl2d.h"
-#include "input.h"
 #include "renderer.h"
-#include "resource.h"
-
-#include <SDL2/SDL_image.h>
-#include <png.h>
 
 #include <algorithm>
 #include <cmath>
@@ -942,12 +937,6 @@ namespace sl
 		if (!loaded)
 			sl::detail::set_error(IMG_GetError());
 		return load_bitmap_from_surface(loaded);
-	}
-
-	Bitmap *load_bitmap(const Archive &archive, const std::string &name)
-	{
-		const auto bytes = archive.read(name);
-		return load_bitmap_from_memory(bytes.data(), bytes.size());
 	}
 
 	/** Save a bitmap as an uncompressed PNG. */

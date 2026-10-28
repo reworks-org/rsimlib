@@ -355,14 +355,6 @@ namespace sl
         bool currently_fullscreen = is_fullscreen();
         return set_fullscreen(!currently_fullscreen);
     }
-    bool set_vsync(bool enabled)
-    {
-        return renderer && renderer->set_vsync(enabled);
-    }
-	bool get_vsync()
-	{
-		return renderer && renderer->vsync_active();
-	}
     int screen_width()
     {
         if (renderTargetWidth > 0)

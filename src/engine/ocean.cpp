@@ -243,9 +243,9 @@ namespace sl
                     if (depth <= 0.0)
                         alpha = transparent ? 0.25f + 0.75f * (1.0f - near_shore) : 1.0f;
                 }
-                v.colour[0] = base.r + 0.07f * lift + 0.85f * foam;
-                v.colour[1] = base.g + 0.26f * lift + 0.85f * foam;
-                v.colour[2] = base.b + 0.26f * lift + 0.85f * foam;
+                v.colour[0] = base.x + 0.07f * lift + 0.85f * foam;
+                v.colour[1] = base.y + 0.26f * lift + 0.85f * foam;
+                v.colour[2] = base.z + 0.26f * lift + 0.85f * foam;
                 v.colour[3] = std::max(alpha, foam);
             }
         }
