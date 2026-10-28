@@ -7,7 +7,7 @@
 #include "draw.h"
 #include "error.h"
 #include "isometric.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -18,7 +18,8 @@
 #include <fstream>
 #include <limits>
 #include <map>
-#include <zlib.h>
+#define MINIZ_HEADER_FILE_ONLY
+#include <miniz.h>
 
 namespace sl
 {

@@ -226,22 +226,20 @@ namespace sl
         return true;
     }
 
-    void display_handle_event(const Event &event)
+    void display_handle_event(const SDL_Event& event)
     {
-        if (event.type() != Event::Type::window_resized)
+		if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
         {
-            return;
-        }
-
-        width = event.window_width();
-        height = event.window_height();
-        if (renderer)
-        {
-            std::string error;
-            if (!renderer->resize(width, height, error) && !error.empty())
-                sl::detail::set_error(error);
-        }
-        detail::resize_screen(logicalWidth > 0 ? logicalWidth : width, logicalHeight > 0 ? logicalHeight : height);
+			width  = event.window.data1;
+			height = event.window.data2;
+            if (renderer)
+            {
+                std::string error;
+                if (!renderer->resize(width, height, error) && !error.empty())
+                    sl::detail::set_error(error);
+            }
+            detail::resize_screen(logicalWidth > 0 ? logicalWidth : width, logicalHeight > 0 ? logicalHeight : height);
+		}
     }
 
     namespace
@@ -283,12 +281,11 @@ namespace sl
         if (!window || !icon || icon->width <= 0 || icon->height <= 0 || !acquire_bitmap(icon))
             return false;
         const bool ok = icon->pixels.size() >= static_cast<std::size_t>(icon->width) * static_cast<std::size_t>(icon->height) * 4;
-        if (ok)
-            if (SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormatFrom(icon->pixels.data(), icon->width, icon->height, 32,
-                                                                           icon->width * 4, SDL_PIXELFORMAT_RGBA32))
+		if (ok)
+			if (SDL_Surface* surface = SDL_CreateSurfaceFrom(icon->width, icon->height, SDL_PIXELFORMAT_RGBA32, icon->pixels.data(), icon->width * 4))
             {
                 SDL_SetWindowIcon(window, surface); // SDL copies the pixels
-                SDL_FreeSurface(surface);
+				SDL_DestroySurface(surface);
             }
         release_bitmap(icon);
         return ok;
@@ -310,12 +307,16 @@ namespace sl
     {
         if (!window)
             return;
-        if (SDL_Surface *icon = SDL_CreateRGBSurfaceWithFormatFrom(const_cast<unsigned char *>(detail::default_icon_rgba),
-                                                                   detail::default_icon_size, detail::default_icon_size, 32,
-                                                                   detail::default_icon_size * 4, SDL_PIXELFORMAT_RGBA32))
+		if (SDL_Surface* icon = SDL_CreateSurfaceFrom(
+				detail::default_icon_size,
+				detail::default_icon_size,
+				SDL_PIXELFORMAT_RGBA32,
+				const_cast<unsigned char*>(detail::default_icon_rgba),
+				detail::default_icon_size * 4
+			))
         {
             SDL_SetWindowIcon(window, icon);
-            SDL_FreeSurface(icon);
+            SDL_DestroySurface(icon);
         }
     }
 

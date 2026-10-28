@@ -12,8 +12,6 @@
 #include "frame_stats.h"
 #include "renderer.h"
 
-#include <SDL2/SDL.h>
-
 namespace sl
 {
 	void shutdown()
