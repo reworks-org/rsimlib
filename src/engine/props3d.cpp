@@ -632,17 +632,18 @@ namespace sl
         Builder b;
         radius = std::max(radius, 4.0f);
         const Colour pad{96, 94, 90, 255};
-        column(b, {0.0f, 0.0f, 0.0f}, {0.0f, 0.2f, 0.0f}, radius, radius, 32, pad);
-        column(b, {0.0f, 0.2f, 0.0f}, {0.0f, 0.23f, 0.0f}, radius * 0.9f, radius * 0.9f, 32, {226, 226, 222, 255}, false, true);
-        column(b, {0.0f, 0.2f, 0.0f}, {0.0f, 0.24f, 0.0f}, radius * 0.86f, radius * 0.86f, 32, shade(pad, 1.05f), false, true);
-        box(b, {-radius * 0.5f, 0.24f, -radius * 0.04f}, {radius * 0.5f, 0.26f, radius * 0.04f}, {226, 226, 222, 255});
-        box(b, {-radius * 0.5f, 0.24f, -radius * 0.04f}, {-radius * 0.42f, 0.26f, radius * 0.5f}, {226, 226, 222, 255});
-        box(b, {radius * 0.42f, 0.24f, -radius * 0.04f}, {radius * 0.5f, 0.26f, radius * 0.5f}, {226, 226, 222, 255});
+        // Each layer stands a few centimetres proud of the one below so the depth buffer can separate them at a distance.
+        column(b, {0.0f, 0.0f, 0.0f}, {0.0f, 0.3f, 0.0f}, radius, radius, 32, pad);
+        column(b, {0.0f, 0.3f, 0.0f}, {0.0f, 0.36f, 0.0f}, radius * 0.9f, radius * 0.9f, 32, {226, 226, 222, 255}, false, true);
+        column(b, {0.0f, 0.3f, 0.0f}, {0.0f, 0.42f, 0.0f}, radius * 0.86f, radius * 0.86f, 32, shade(pad, 1.05f), false, true);
+        box(b, {-radius * 0.5f, 0.42f, -radius * 0.04f}, {radius * 0.5f, 0.48f, radius * 0.04f}, {226, 226, 222, 255});
+        box(b, {-radius * 0.5f, 0.42f, -radius * 0.04f}, {-radius * 0.42f, 0.48f, radius * 0.5f}, {226, 226, 222, 255});
+        box(b, {radius * 0.42f, 0.42f, -radius * 0.04f}, {radius * 0.5f, 0.48f, radius * 0.5f}, {226, 226, 222, 255});
         for (int i = 0; i < 8; ++i)
         {
             const float a = 2.0f * pi * static_cast<float>(i) / 8.0f;
             const float x = std::sin(a) * radius * 0.96f, z = std::cos(a) * radius * 0.96f;
-            column(b, {x, 0.2f, z}, {x, 0.55f, z}, 0.12f, 0.12f, 5, {255, 200, 90, 255});
+            column(b, {x, 0.3f, z}, {x, 0.65f, z}, 0.12f, 0.12f, 5, {255, 200, 90, 255});
         }
         return b.data;
     }
@@ -1576,6 +1577,71 @@ namespace sl
         return b.data;
     }
 
+    MeshData make_bomb_data(float radius, float length, Colour casing, Colour band)
+    {
+        Builder b;
+        const float tail = 0.28f * length, nose = 0.24f * length, body = length - tail - nose;
+        std::vector<Rp> profile{{0.0f, 0.0f}, {radius * 0.45f, 0.0f}, {radius, tail}, {radius, tail + body}};
+        constexpr int steps = 5;
+        for (int i = 1; i < steps; ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(steps);
+            profile.push_back({radius * std::pow(std::cos(t * 0.5f * pi), 0.8f), tail + body + t * nose});
+        }
+        profile.push_back({0.0f, length});
+        revolve(b, profile, 14, [&](int k) { return k == 1 ? shade(casing, 0.9f) : (k == 3 ? band : casing); });
+        const float span = radius * 1.9f, chord = tail * 1.05f, half = 0.012f * length;
+        for (int i = 0; i < 4; ++i)
+        {
+            const float a = 0.25f * pi + 0.5f * pi * static_cast<float>(i);
+            const V radial{std::sin(a), 0.0f, std::cos(a)};
+            const V tangent{radial.z, 0.0f, -radial.x};
+            const auto ring = [&](float side)
+            {
+                return Ring{radial * (radius * 0.4f) + tangent * side, radial * span + tangent * side + V{0.0f, 0.1f * chord, 0.0f},
+                            radial * span + tangent * side + V{0.0f, 0.7f * chord, 0.0f}, radial * (radius * 0.9f) + tangent * side + V{0.0f, chord, 0.0f}};
+            };
+            b.prism(ring(-half), ring(half), shade(casing, 0.8f));
+        }
+        column(b, {0.0f, 0.5f * chord, 0.0f}, {0.0f, 0.5f * chord + 0.02f, 0.0f}, span * 0.7f, span * 0.7f, 12, shade(casing, 0.7f), false, false);
+        return b.data;
+    }
+
+    MeshData make_fatman_data(float radius, float length, Colour casing)
+    {
+        Builder b;
+        const float tail = 0.3f * length, egg = length - tail;
+        std::vector<Rp> profile{{0.0f, tail}};
+        constexpr int steps = 10;
+        for (int i = 0; i <= steps; ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(steps);
+            const float y = tail + t * egg;
+            const float u = 2.0f * t - 1.0f;
+            const float r = radius * std::sqrt(std::max(0.0f, 1.0f - u * u)) * (1.0f - 0.12f * u);
+            profile.push_back({std::max(r, 0.001f), y});
+        }
+        profile.front() = {0.0f, tail};
+        profile.back() = {0.0f, length};
+        revolve(b, profile, 18, [&](int k) { return k % 3 == 0 ? shade(casing, 1.12f) : casing; });
+        const float bw = radius * 0.5f;
+        box(b, {-bw, 0.0f, -bw}, {bw, tail * 1.02f, bw}, shade(casing, 0.85f));
+        for (int i = 0; i < 4; ++i)
+        {
+            const float a = 0.25f * pi + 0.5f * pi * static_cast<float>(i);
+            const V radial{std::sin(a), 0.0f, std::cos(a)};
+            const V tangent{radial.z, 0.0f, -radial.x};
+            const float span = radius * 1.25f, half = 0.01f * length;
+            const auto ring = [&](float side)
+            {
+                return Ring{radial * (bw * 0.7f) + tangent * side, radial * span + tangent * side, radial * span + tangent * side + V{0.0f, 0.6f * tail, 0.0f},
+                            radial * (bw * 0.7f) + tangent * side + V{0.0f, tail, 0.0f}};
+            };
+            b.prism(ring(-half), ring(half), shade(casing, 0.75f));
+        }
+        return b.data;
+    }
+
     MeshData make_launch_escape_tower_data(float height, Colour motor)
     {
         Builder b;
@@ -1749,7 +1815,7 @@ namespace sl
         box(b, {-half, 0.0f, hole}, {half, thick, half}, concrete);
         box(b, {-half, 0.0f, -hole}, {-hole, thick, hole}, shade(concrete, 0.95f));
         box(b, {hole, 0.0f, -hole}, {half, thick, hole}, shade(concrete, 0.95f));
-        box(b, {-hole, 0.0f, -hole}, {hole, 0.2f, hole}, {40, 36, 34, 255});
+        box(b, {-hole, 0.0f, -hole}, {hole, thick + 0.02f, hole}, {40, 36, 34, 255}); // flame-deflector plate, level with the deck so ships can rest on it
         for (const float x : {-1.0f, 1.0f})
         {
             for (const float z : {-1.0f, 1.0f})

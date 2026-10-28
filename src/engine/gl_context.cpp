@@ -6,6 +6,7 @@
 #include <glad/glad.h>
 
 #include <SDL3/SDL.h>
+#include <cstdio>
 
 namespace sl::detail
 {
@@ -28,6 +29,8 @@ namespace sl::detail
 #ifdef _WIN32
 		gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
 #endif
+        std::fprintf(stderr, "OpenGL renderer: %s (%s)\n", reinterpret_cast<const char *>(glGetString(GL_RENDERER)),
+                reinterpret_cast<const char *>(glGetString(GL_VERSION)));
         return true;
     }
 

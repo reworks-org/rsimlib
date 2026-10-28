@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -99,13 +100,7 @@ namespace sl::detail
         std::vector<VkPhysicalDevice> devices(device_count);
         vkEnumeratePhysicalDevices(instance_, &device_count, devices.data());
 
-        // Prefer an integrated GPU over a discrete one when both support presentation. On this
-        // hybrid (Optimus/PRIME) laptop, sustained heavy GPU workloads (compute + high particle
-        // counts + render-target churn) have been observed to make the NVIDIA driver's
-        // vkDeviceWaitIdle()/vkDestroySwapchainKHR() take many seconds to tens of seconds to
-        // return - the GPU is genuinely still busy at that point, not hung, so it looks like a
-        // real driver-side synchronization issue rather than anything fixable from here. The
-        // integrated GPU does not exhibit this for the same workloads.
+        // Prefer a discrete GPU when several support presentation.
         // Override: SIMLIB_VULKAN_DEVICE_TYPE=discrete|integrated|any.
         const char *forced_device_type = std::getenv("SIMLIB_VULKAN_DEVICE_TYPE");
         auto device_score = [forced_device_type](VkPhysicalDeviceType type) -> int
@@ -122,9 +117,9 @@ namespace sl::detail
             switch (type)
             {
             case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
-                return 3;
-            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
                 return 2;
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+                return 3;
             case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
                 return 1;
             default:
@@ -191,6 +186,8 @@ namespace sl::detail
         vkGetPhysicalDeviceFeatures(physical_device_, &supported_features);
         VkPhysicalDeviceFeatures enabled_features{};
         enabled_features.samplerAnisotropy = supported_features.samplerAnisotropy;
+        enabled_features.fillModeNonSolid = supported_features.fillModeNonSolid;
+        fill_mode_non_solid_enabled_ = supported_features.fillModeNonSolid == VK_TRUE;
         sampler_anisotropy_enabled_ = enabled_features.samplerAnisotropy == VK_TRUE;
         VkPhysicalDeviceProperties selected_properties{};
         vkGetPhysicalDeviceProperties(physical_device_, &selected_properties);
@@ -198,6 +195,7 @@ namespace sl::detail
                                       ? std::min(selected_properties.limits.maxSamplerAnisotropy, 16.0f)
                                       : 1.0f;
         device_info.pEnabledFeatures = &enabled_features;
+        std::fprintf(stderr, "Vulkan device: %s (driver %u)\n", selected_properties.deviceName, selected_properties.driverVersion);
         if (vkCreateDevice(physical_device_, &device_info, nullptr, &device_) != VK_SUCCESS)
         {
             error = "Unable to create Vulkan logical device.";
@@ -377,7 +375,8 @@ namespace sl::detail
         depth_attachment.format = depth_format_;
         depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
         depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        // Stored: the pass is ended and resumed mid-frame (parallel recording, sampling), which must keep the depth.
+        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1252,7 +1251,7 @@ namespace sl::detail
         pool_info.pPoolSizes = &pool_size;
         if (vkCreateDescriptorSetLayout(device_, &layout_info, nullptr, &environment_layout_) != VK_SUCCESS ||
             vkCreateDescriptorPool(device_, &pool_info, nullptr, &environment_pool_) != VK_SUCCESS ||
-            !create_buffer(environment_slot_size * environment_slot_count, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            !create_buffer(environment_buffer_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                            environment_buffer_, error))
         {
@@ -1312,20 +1311,22 @@ namespace sl::detail
         }
         // Consecutive draws usually share the same environment, so reuse the previous slot when it matches.
         if (environment_next_ > 0 && environment_last_bytes_ == bytes &&
-            std::memcmp(environment_mapped_ + (environment_next_ - 1) * environment_slot_size, data, bytes) == 0)
+            std::memcmp(environment_mapped_ + environment_last_offset_, data, bytes) == 0)
         {
-            dynamic_offset = static_cast<std::uint32_t>((environment_next_ - 1) * environment_slot_size);
+            dynamic_offset = environment_last_offset_;
             return true;
         }
-        if (environment_next_ >= environment_slot_count)
+        // The descriptor range is a whole slot, so the last block must leave that much buffer after its offset.
+        if (environment_next_ + environment_slot_size > environment_buffer_size)
         {
             error = "Vulkan environment block is full for this frame.";
             return false;
         }
-        dynamic_offset = static_cast<std::uint32_t>(environment_next_ * environment_slot_size);
+        dynamic_offset = environment_next_;
         std::memcpy(environment_mapped_ + dynamic_offset, data, bytes);
         environment_last_bytes_ = bytes;
-        ++environment_next_;
+        environment_last_offset_ = dynamic_offset;
+        environment_next_ = (environment_next_ + static_cast<std::uint32_t>(bytes) + 255u) & ~255u;
         return true;
     }
 
@@ -3067,7 +3068,8 @@ namespace sl::detail
                                                  bool sky,
                                                  bool instanced,
                                                  int blend_variant,
-                                                 bool depth_write)
+                                                 bool depth_write,
+                                                 bool wireframe)
     {
         result = {};
         if (mesh_vertices || sky)
@@ -3204,7 +3206,7 @@ namespace sl::detail
         viewport.viewportCount = 1;
         viewport.scissorCount = 1;
         VkPipelineRasterizationStateCreateInfo rasterization{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterization.polygonMode = wireframe && fill_mode_non_solid_enabled_ ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
         rasterization.cullMode = cull_mode;
         rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterization.lineWidth = 1.0f;
@@ -3352,6 +3354,9 @@ namespace sl::detail
         if (device_ != VK_NULL_HANDLE)
         {
             wait_device_idle();
+            frame_active_ = false;
+            command_buffer_recording_ = false;
+            render_pass_active_ = false;
             for (VkFramebuffer framebuffer : framebuffers_)
             {
                 vkDestroyFramebuffer(device_, framebuffer, nullptr);

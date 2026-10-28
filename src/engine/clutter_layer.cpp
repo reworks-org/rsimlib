@@ -3,6 +3,7 @@
 #include "error.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -114,9 +115,25 @@ namespace sl
         {
             ClutterSpecies spec;
             Impostor *impostor = nullptr;
+            double radius = 0.0, height = 0.0;
         };
 
         const Terrain &terrain;
+        double turn = 0.0;
+        dvec3 axis{0.0, 1.0, 0.0};
+
+        // Cells live in the body-fixed frame but the terrain's direction queries take and return world vectors, so a
+        // turning planet needs the turn applied going in and undone coming out.
+        glm::dquat turn_quat() const { return glm::angleAxis(turn, axis); }
+        dvec3 query_direction(const dvec3 &body_direction) const { return turn != 0.0 ? turn_quat() * body_direction : body_direction; }
+        dvec3 body_vector(const dvec3 &world_vector) const { return turn != 0.0 ? glm::inverse(turn_quat()) * world_vector : world_vector; }
+        dvec3 body_point(const dvec3 &world_point) const
+        {
+            if (turn == 0.0)
+                return world_point;
+            const dvec3 centre = terrain.config().origin;
+            return centre + glm::inverse(turn_quat()) * (world_point - centre);
+        }
         ClutterConfig config;
         bool sphere;
         int grid = 1;
@@ -179,7 +196,7 @@ namespace sl
                 const double s = -1.0 + 2.0 * (key.x + 0.5) / grid;
                 const double t = -1.0 + 2.0 * (key.z + 0.5) / grid;
                 const dvec3 direction = face_direction(key.face, s, t);
-                cell.origin = terrain.surface_point(direction);
+                cell.origin = body_point(terrain.surface_point(query_direction(direction)));
                 cell.up = direction;
             }
             else
@@ -217,9 +234,10 @@ namespace sl
                     const double s = -1.0 + 2.0 * (cell.key.x + u1) / grid;
                     const double t = -1.0 + 2.0 * (cell.key.z + u2) / grid;
                     const dvec3 direction = face_direction(cell.key.face, s, t);
-                    height = terrain.height_at_direction(direction);
-                    position = terrain.surface_point(direction);
-                    normal = terrain.normal_at_direction(direction);
+                    const dvec3 query = query_direction(direction);
+                    height = terrain.height_at_direction(query);
+                    position = body_point(terrain.surface_point(query));
+                    normal = body_vector(terrain.normal_at_direction(query));
                     up = direction;
                 }
                 else
@@ -459,19 +477,59 @@ namespace sl
             if (!entry.impostor)
                 return -1;
         }
+        {
+            // The trunk or base: the horizontal reach of the vertices in the lowest third of the object.
+            float top = 0.0f;
+            for (const Vertex3D &v : species.mesh.vertices)
+                top = std::max(top, v.position[1]);
+            float reach = 0.0f;
+            for (const Vertex3D &v : species.mesh.vertices)
+                if (v.position[1] <= top * 0.3f)
+                    reach = std::max(reach, std::hypot(v.position[0], v.position[2]));
+            entry.radius = std::max(reach, 0.1f);
+            entry.height = top;
+        }
         impl_->species.push_back(std::move(entry));
         return static_cast<int>(impl_->species.size()) - 1;
     }
 
     int ClutterLayer::species_count() const { return static_cast<int>(impl_->species.size()); }
 
-    void ClutterLayer::update(const TerrainView &view) { impl_->update(view); }
+    void ClutterLayer::update(const TerrainView &view)
+    {
+        // Cells are built in the planet's body-fixed frame, so a turning planet takes the view in that frame and
+        // draw() turns the result back into the world.
+        const Terrain &terrain = impl_->terrain;
+        impl_->turn = terrain.config().shape == TerrainShape::sphere ? terrain.rotation() : 0.0;
+        if (impl_->turn == 0.0)
+        {
+            impl_->update(view);
+            return;
+        }
+        impl_->axis = terrain.rotation_axis();
+        const dvec3 centre = terrain.config().origin;
+        const glm::dquat inverse = glm::inverse(glm::angleAxis(impl_->turn, impl_->axis));
+        TerrainView v = view;
+        v.position = centre + inverse * (view.position - centre);
+        v.forward = inverse * view.forward;
+        v.up = inverse * view.up;
+        impl_->update(v);
+    }
 
     bool ClutterLayer::draw(const dvec3 &origin) const
     {
         bool ok = true;
+        const bool turning = impl_->turn != 0.0;
+        const dvec3 centre = impl_->terrain.config().origin;
+        const glm::dquat turn = glm::angleAxis(impl_->turn, impl_->axis);
         for (const DrawItem &item : impl_->items)
-            ok = draw_mesh(item.mesh, glm::translate(glm::mat4(1.0f), glm::vec3(item.origin - origin)), item.material) && ok;
+        {
+            const dvec3 placed = turning ? centre + turn * (item.origin - centre) : item.origin;
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(placed - origin));
+            if (turning)
+                model = glm::rotate(model, static_cast<float>(impl_->turn), glm::vec3(impl_->axis));
+            ok = draw_mesh(item.mesh, model, item.material) && ok;
+        }
         return ok;
     }
 
@@ -506,5 +564,37 @@ namespace sl
     }
 
     ClutterStats ClutterLayer::stats() const { return impl_->stats; }
+
+    void ClutterLayer::obstacles(const dvec3 &point, double range, std::vector<ClutterObstacle> &out) const
+    {
+        const Impl &impl = *impl_;
+        const dvec3 centre = impl.terrain.config().origin;
+        const dvec3 here = impl.body_point(point);
+        const glm::dquat turn = impl.turn_quat();
+        for (const auto &entry : impl.cells)
+        {
+            const Cell &cell = entry.second;
+            if (glm::length(cell.origin - here) > range + impl.config.cell_size * 1.5)
+                continue;
+            for (std::size_t i = 0; i < cell.species.size() && i < impl.species.size(); ++i)
+            {
+                const Impl::Species &sp = impl.species[i];
+                if (!sp.spec.solid)
+                    continue;
+                for (const Instance3D &inst : cell.species[i].instances)
+                {
+                    const dvec3 body_position = cell.origin + dvec3(inst.position);
+                    if (glm::length(body_position - here) > range)
+                        continue;
+                    ClutterObstacle o;
+                    o.position = impl.turn != 0.0 ? centre + turn * (body_position - centre) : body_position;
+                    o.radius = sp.radius * inst.scale;
+                    o.height = sp.height * inst.scale;
+                    o.species = static_cast<int>(i);
+                    out.push_back(o);
+                }
+            }
+        }
+    }
 
 } // namespace sl

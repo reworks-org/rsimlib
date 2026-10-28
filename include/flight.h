@@ -6,6 +6,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <string>
+#include <functional>
 #include <vector>
 
 namespace sl
@@ -123,6 +124,12 @@ namespace sl
         double level = 0.0;
         /** If true, thrust scales with air density relative to sea level, so it fades with altitude. */
         bool air_breathing = false;
+        /**
+         * Specific impulse at sea-level pressure in seconds, or 0 for an engine whose Isp does not change. `isp` is then the
+         * vacuum value, propellant flow stays constant and thrust follows the Isp, falling as the air gets denser
+         * (the Orbiter model); `max_thrust` is the vacuum thrust.
+         */
+        double isp_sea_level = 0.0;
     };
 
     /** A named set of thrusters controlled together (main, retro, hover, RCS axes and so on). */
@@ -226,6 +233,10 @@ namespace sl
          */
         const Terrain *terrain = nullptr;
         Atmosphere atmosphere;
+        /** Wind in m/s (world frame) added to the planet's rotating air, inside its atmosphere. Applies to bodies with a radius and an atmosphere. */
+        dvec3 wind{0.0};
+        /** When set, gives the wind (world frame, m/s) at a point from its offset from the planet's centre, instead of `wind`; lets each ship feel its own local wind. */
+        std::function<dvec3(const dvec3 &offset)> wind_field;
 
         dvec3 position{0.0};
         dvec3 velocity{0.0};

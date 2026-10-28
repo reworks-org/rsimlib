@@ -51,6 +51,13 @@ namespace sl
         float specular_min_roughness = 0.15f;
         /** How far, in tile widths, the skirt around each patch dips to hide cracks between levels of detail. */
         float skirt = 0.05f;
+        /**
+         * Where a regional high-resolution patch ends, the sharp tile fades out over this fraction of its width onto the
+         * coarser tile beneath, instead of stopping at a hard edge. 0 turns it off.
+         */
+        float feather = 0.3f;
+        /** Seconds a tile takes to fade in over its parent when it finishes loading, so detail does not pop. 0 turns it off. */
+        float fade_seconds = 0.4f;
     };
 
     /** What PlanetTiles is doing, for overlays and tests. */
@@ -106,6 +113,8 @@ namespace sl
         int tile_size() const;
         /** True when a specular map was opened. */
         bool has_specular() const;
+        /** Changes the brightness of the specular overlay, 0-1, from the next draw (so it can fade with altitude). */
+        void set_specular_strength(float strength);
         PlanetTilesStats stats() const;
 
         /**
