@@ -267,7 +267,7 @@ namespace
             return std::nullopt;
         }
 
-        SDL_Surface *rgba = SDL_ConvertSurface(rendered, SDL_PIXELFORMAT_RGBA32, 0);
+        SDL_Surface *rgba = SDL_ConvertSurface(rendered, SDL_PIXELFORMAT_RGBA32);
         SDL_DestroySurface(rendered);
         if (!rgba)
         {
@@ -545,13 +545,13 @@ namespace
             return nullptr;
         }
 
-        SDL_RWops *rw = SDL_RWFromConstMem(fontBytes->data(), static_cast<int>(fontBytes->size()));
+        auto *rw = SDL_IOFromConstMem(fontBytes->data(), static_cast<int>(fontBytes->size()));
         if (!rw)
         {
             return nullptr;
         }
 
-        return TTF_OpenFontRW(rw, 1, pointSize);
+        return TTF_OpenFontIO(rw, 1, pointSize);
     }
 
     Font *open_sans_font(int pointSize)
@@ -592,8 +592,8 @@ namespace
     {
         if (!data || size == 0 || size > std::numeric_limits<int>::max())
             return nullptr;
-        SDL_RWops *rw = SDL_RWFromConstMem(data, static_cast<int>(size));
-        Font *font = rw ? TTF_OpenFontRW(rw, 1, pointSize) : nullptr;
+        auto *rw = SDL_IOFromConstMem(data, static_cast<int>(size));
+		Font* font = rw ? TTF_OpenFontIO(rw, 1, pointSize) : nullptr;
         if (!font)
             sl::detail::set_error(SDL_GetError());
         return font;

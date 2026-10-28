@@ -5,84 +5,88 @@
 #define PL_MPEG_IMPLEMENTATION
 #include <pl_mpeg.h>
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 #include <algorithm>
 
 namespace sl
 {
-    struct Video
-    {
-        plm_t *plm = nullptr;
-        Bitmap *bitmap = nullptr;
-        SDL_AudioDeviceID audio_device = 0;
-        float volume = 1.0f;
-        bool wants_audio = false;
-        bool audio_ready = false;
-    };
+	struct Video
+	{
+		plm_t*           plm          = nullptr;
+		Bitmap*          bitmap       = nullptr;
+		SDL_AudioStream* audio_stream = nullptr; // SDL3 uses streams instead of raw device IDs
+		float            volume       = 1.0f;
+		bool             wants_audio  = false;
+		bool             audio_ready  = false;
+	};
 
-    namespace
-    {
-        void video_frame_callback(plm_t *, plm_frame_t *frame, void *user)
-        {
-            Video *video = static_cast<Video *>(user);
-            Bitmap *bitmap = video->bitmap;
-            const int stride = bitmap->width * 4;
+	namespace
+	{
+		void video_frame_callback(plm_t*, plm_frame_t* frame, void* user)
+		{
+			Video*    video  = static_cast<Video*>(user);
+			Bitmap*   bitmap = video->bitmap;
+			const int stride = bitmap->width * 4;
 
-            plm_frame_to_rgba(frame, bitmap->pixels.data(), stride);
-            bitmap->ram_dirty = true;
-            upload_bitmap(bitmap);
-        }
+			plm_frame_to_rgba(frame, bitmap->pixels.data(), stride);
+			bitmap->ram_dirty = true;
+			upload_bitmap(bitmap);
+		}
 
-        void video_audio_callback(plm_t *, plm_samples_t *samples, void *user)
-        {
-            Video *video = static_cast<Video *>(user);
+		void video_audio_callback(plm_t*, plm_samples_t* samples, void* user)
+		{
+			Video* video = static_cast<Video*>(user);
 
-            if (!video->audio_device)
-                return;
+			if (!video->audio_stream)
+				return;
 
-            constexpr int sample_count = PLM_AUDIO_SAMPLES_PER_FRAME * 2;
+			constexpr int sample_count = PLM_AUDIO_SAMPLES_PER_FRAME * 2;
 
-            if (video->volume >= 0.999f)
-            {
-                SDL_QueueAudio(video->audio_device, samples->interleaved, sample_count * sizeof(float));
-                return;
-            }
+			if (video->volume >= 0.999f)
+			{
+				SDL_PutAudioStreamData(video->audio_stream, samples->interleaved, sample_count * sizeof(float));
+				return;
+			}
+                
+			float scaled[sample_count];
+			for (int i = 0; i < sample_count; ++i)
+				scaled[i] = samples->interleaved[i] * video->volume;
 
-            float scaled[sample_count];
-            for (int i = 0; i < sample_count; ++i)
-                scaled[i] = samples->interleaved[i] * video->volume;
+			SDL_PutAudioStreamData(video->audio_stream, scaled, sizeof(scaled));
+		}
 
-            SDL_QueueAudio(video->audio_device, scaled, sizeof(scaled));
-        }
+		// Opening the SDL audio device is deferred until the first update_video() call
+		// (rather than done eagerly in open_video()) because set_gfx_mode() unconditionally
+		// calls SDL_Quit() during its own setup, which would otherwise invalidate an audio
+		// device opened beforehand (a common ordering need: open the video first to size the
+		// window from its dimensions, then set_gfx_mode(), then start the update loop).
+		void ensure_audio_ready(Video* video)
+		{
+			if (video->audio_ready || !video->wants_audio)
+				return;
 
-        // Opening the SDL audio device is deferred until the first update_video() call
-        // (rather than done eagerly in open_video()) because set_gfx_mode() unconditionally
-        // calls SDL_Quit() during its own setup, which would otherwise invalidate an audio
-        // device opened beforehand (a common ordering need: open the video first to size the
-        // window from its dimensions, then set_gfx_mode(), then start the update loop).
-        void ensure_audio_ready(Video *video)
-        {
-            if (video->audio_ready || !video->wants_audio)
-                return;
+			video->audio_ready = true;
 
-            video->audio_ready = true;
+			SDL_AudioSpec want {};
+			want.freq     = plm_get_samplerate(video->plm);
+			want.format   = SDL_AUDIO_F32; // SDL3 replaces AUDIO_F32SYS with SDL_AUDIO_F32
+			want.channels = 2;
+			// want.samples was removed from SDL_AudioSpec in SDL3
 
-            SDL_AudioSpec want{};
-            want.freq = plm_get_samplerate(video->plm);
-            want.format = AUDIO_F32SYS;
-            want.channels = 2;
-            want.samples = 4096;
+			// Open the default playback device directly into a managed stream
+			video->audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &want, nullptr, nullptr);
 
-            video->audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0);
+			if (video->audio_stream)
+			{
+				// SDL3 manages buffers internally. We reuse 4096.0 from the old want.samples here.
+				plm_set_audio_lead_time(video->plm, 4096.0 / want.freq);
+				plm_set_audio_decode_callback(video->plm, video_audio_callback, video);
 
-            if (video->audio_device)
-            {
-                plm_set_audio_lead_time(video->plm, static_cast<double>(want.samples) / want.freq);
-                plm_set_audio_decode_callback(video->plm, video_audio_callback, video);
-                SDL_PauseAudioDevice(video->audio_device, 0);
-            }
-        }
+				// Devices open in a paused state. Get the device bound to the stream and resume it.
+				SDL_ResumeAudioDevice(SDL_GetAudioStreamDevice(video->audio_stream));
+			}
+		}
 
         Video *create_video(plm_t *plm, bool audio)
         {
@@ -150,22 +154,22 @@ namespace sl
         return video;
     }
 
-    void destroy_video(Video *video)
-    {
-        if (!video)
-            return;
+    void destroy_video(Video* video)
+	{
+		if (!video)
+			return;
 
-        if (video->audio_device)
-            SDL_CloseAudioDevice(video->audio_device);
+		if (video->audio_stream)
+			SDL_DestroyAudioStream(video->audio_stream);
 
-        if (video->bitmap)
-            destroy_bitmap(video->bitmap);
+		if (video->bitmap)
+			destroy_bitmap(video->bitmap);
 
-        if (video->plm)
-            plm_destroy(video->plm);
+		if (video->plm)
+			plm_destroy(video->plm);
 
-        delete video;
-    }
+		delete video;
+	}
 
     void update_video(Video *video, double dt_seconds)
     {

@@ -1,7 +1,7 @@
 #include "model3d.h"
 
 #include "error.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <glm/gtc/quaternion.hpp>
 

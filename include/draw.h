@@ -197,8 +197,6 @@ namespace sl
     Bitmap *load_bitmap(const std::string &path);
     /** Load an image from memory. */
     Bitmap *load_bitmap_from_memory(const std::uint8_t *data, std::size_t size);
-    /** Save a bitmap as an uncompressed PNG, appending .png when no extension is supplied. */
-    bool save_bitmap(Bitmap *bitmap, const std::string &path);
     /** Destroy a bitmap created by this module. */
     void destroy_bitmap(Bitmap *bitmap);
 

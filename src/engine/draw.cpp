@@ -2,8 +2,10 @@
  * @brief Implements bitmap storage, primitives, sprites, and render targets.
  */
 
-#include "draw.h"
+#include <SDL_stbimage.h>
 
+#include "draw.h"
+#include "input.h"
 #include "async_internal.h"
 #include "display.h"
 #include "error.h"
@@ -893,8 +895,8 @@ namespace sl
 			return nullptr;
 		}
 
-		SDL_Surface *rgba = SDL_ConvertSurfaceFormat(loaded, SDL_PIXELFORMAT_RGBA32, 0);
-		SDL_FreeSurface(loaded);
+		SDL_Surface *rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+		SDL_DestroySurface(loaded);
 		if (!rgba)
 		{
 			sl::detail::set_error(SDL_GetError());
@@ -911,15 +913,15 @@ namespace sl
 				std::memcpy(bitmap->pixels.data() + static_cast<std::size_t>(y) * rowBytes, sourcePixels + static_cast<std::size_t>(y) * rgba->pitch, rowBytes);
 			}
 		}
-		SDL_FreeSurface(rgba);
+		SDL_DestroySurface(rgba);
 		return bitmap;
 	}
 
 	Bitmap *load_bitmap(const std::string &path)
 	{
-		SDL_Surface *loaded = IMG_Load(path.c_str());
+		SDL_Surface* loaded = STBIMG_Load(path.c_str());
 		if (!loaded)
-			sl::detail::set_error(IMG_GetError());
+			sl::detail::set_error(SDL_GetError());
 		return load_bitmap_from_surface(loaded);
 	}
 
@@ -927,80 +929,11 @@ namespace sl
 	{
 		if (!data || size == 0 || size > std::numeric_limits<int>::max())
 			return nullptr;
-		SDL_RWops *rw = SDL_RWFromConstMem(data, static_cast<int>(size));
-		if (!rw)
-		{
-			sl::detail::set_error(SDL_GetError());
-			return nullptr;
-		}
-		SDL_Surface *loaded = IMG_Load_RW(rw, 1);
+		
+		SDL_Surface* loaded = STBIMG_LoadFromMemory(data, size);
 		if (!loaded)
-			sl::detail::set_error(IMG_GetError());
+			sl::detail::set_error(SDL_GetError());
 		return load_bitmap_from_surface(loaded);
-	}
-
-	/** Save a bitmap as an uncompressed PNG. */
-	bool save_bitmap(Bitmap *bitmap, const std::string &path)
-	{
-		if (!bitmap || path.empty() || !acquire_bitmap(bitmap))
-		{
-			return false;
-		}
-
-		std::filesystem::path outputPath(path);
-		if (outputPath.extension().empty())
-		{
-			outputPath += ".png";
-		}
-
-		FILE *file = std::fopen(outputPath.string().c_str(), "wb");
-		if (!file)
-		{
-			sl::detail::set_error("Unable to open bitmap output file");
-			return false;
-		}
-
-		png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
-		png_infop info = png ? png_create_info_struct(png) : nullptr;
-		if (!png || !info)
-		{
-			png_destroy_write_struct(png ? &png : nullptr, info ? &info : nullptr);
-			std::fclose(file);
-			return false;
-		}
-
-		if (setjmp(png_jmpbuf(png)))
-		{
-			png_destroy_write_struct(&png, &info);
-			std::fclose(file);
-			return false;
-		}
-
-		png_init_io(png, file);
-		png_set_compression_level(png, 0);
-		png_set_filter(png, 0, PNG_FILTER_NONE);
-		png_set_IHDR(
-			png,
-			info,
-			static_cast<png_uint_32>(bitmap->width),
-			static_cast<png_uint_32>(bitmap->height),
-			8,
-			PNG_COLOR_TYPE_RGBA,
-			PNG_INTERLACE_NONE,
-			PNG_COMPRESSION_TYPE_BASE,
-			PNG_FILTER_TYPE_BASE);
-
-		const std::size_t rowBytes = static_cast<std::size_t>(bitmap->width) * bytes_per_pixel;
-		png_write_info(png, info);
-		for (int y = 0; y < bitmap->height; ++y)
-		{
-			png_write_row(png, bitmap->pixels.data() + static_cast<std::size_t>(y) * rowBytes);
-		}
-		png_write_end(png, info);
-
-		png_destroy_write_struct(&png, &info);
-		std::fclose(file);
-		return true;
 	}
 
 	/** Destroy a bitmap and its GPU resources. */

@@ -1,7 +1,7 @@
 #include "model3d.h"
 
 #include "error.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -16,7 +16,6 @@
 #include <string_view>
 
 #include <glm/gtc/matrix_transform.hpp>
-#include <pugixml.hpp>
 
 namespace sl
 {

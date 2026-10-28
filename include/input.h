@@ -1,15 +1,10 @@
 #pragma once
 
-#include <SDL2/SDL_scancode.h>
-
-#include "event.h"
-
+#include <SDL3/SDL_video.h>
 #include <cstdint>
 
 namespace sl
 {
-    using Key = Event::Key;
-
     /** Identifiers for mouse buttons. */
     enum class MouseButton : std::uint8_t
     {
@@ -25,17 +20,6 @@ namespace sl
     constexpr std::uint32_t MOUSE_BUTTON_MIDDLE_MASK = 1u << 1;
     constexpr std::uint32_t MOUSE_BUTTON_RIGHT_MASK = 1u << 2;
 
-    /** Poll the next SDL event, returning false when the queue is empty. */
-    bool poll_event(Event *event);
-    /** Return whether a keyboard scancode is currently held. */
-    bool key_down(SDL_Scancode key);
-    bool key_down(Event::Key key);
-    /** Backend scancode for a Key (0 when it has no mapping). Used by InputMap; games rarely need it. */
-    int key_scancode(Event::Key key);
-    /** Start delivering Event::Type::text_input events (for text fields and consoles). */
-    void start_text_input();
-    /** Stop delivering text_input events. */
-    void stop_text_input();
     /** Return the current mouse X coordinate in window pixels. */
     int mouse_x();
     /** Return the current mouse Y coordinate in window pixels. */
@@ -55,9 +39,9 @@ namespace sl
     bool mouse_button_down(int button);
 
     /** Enable or disable relative mouse mode (locks cursor to window, hides it, and reports relative motion). */
-    bool set_relative_mouse_mode(bool enabled);
+	bool set_relative_mouse_mode(SDL_Window* window, bool enabled);
     /** Return whether relative mouse mode is currently enabled. */
-    bool relative_mouse_mode();
+	bool relative_mouse_mode(SDL_Window* window);
 
     /** Retrieve relative mouse movement (delta) since the last call. */
     void mouse_delta(int *dx, int *dy);
