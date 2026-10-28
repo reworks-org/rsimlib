@@ -9,12 +9,7 @@
 
 namespace sl
 {
-    class Archive;
     struct Bitmap;
-}
-
-namespace sl
-{
 
     /** Callback signature for point-plotter algorithms (e.g. do_line, do_circle). */
     using PixelProc = std::function<void(Bitmap *bitmap, int x, int y, int d)>;

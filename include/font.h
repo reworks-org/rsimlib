@@ -11,11 +11,6 @@
 
 namespace sl
 {
-    class Archive;
-}
-
-namespace sl
-{
 
     /** Opaque alias hiding the SDL_ttf font type from callers. */
     using Font = TTF_Font;
