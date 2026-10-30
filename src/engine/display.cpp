@@ -10,7 +10,6 @@
 #include "font.h"
 #include "error.h"
 #include "renderer.h"
-#include "icon_data.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_TTF/SDL_ttf.h>
@@ -186,8 +185,6 @@ namespace sl
             return false;
         }
 
-        reset_window_icon();
-
         std::string renderer_error;
         if (!renderer->initialise(window, renderer_error))
         {
@@ -274,50 +271,6 @@ namespace sl
     {
         mouseVisible = false;
         detail::refresh_mouse_cursor();
-    }
-
-    bool set_window_icon(Bitmap *icon)
-    {
-        if (!window || !icon || icon->width <= 0 || icon->height <= 0 || !acquire_bitmap(icon))
-            return false;
-        const bool ok = icon->pixels.size() >= static_cast<std::size_t>(icon->width) * static_cast<std::size_t>(icon->height) * 4;
-		if (ok)
-			if (SDL_Surface* surface = SDL_CreateSurfaceFrom(icon->width, icon->height, SDL_PIXELFORMAT_RGBA32, icon->pixels.data(), icon->width * 4))
-            {
-                SDL_SetWindowIcon(window, surface); // SDL copies the pixels
-				SDL_DestroySurface(surface);
-            }
-        release_bitmap(icon);
-        return ok;
-    }
-
-    bool set_window_icon(const char *path)
-    {
-        if (!path)
-            return false;
-        Bitmap *icon = load_bitmap(path);
-        if (!icon)
-            return false;
-        const bool ok = set_window_icon(icon);
-        destroy_bitmap(icon);
-        return ok;
-    }
-
-    void reset_window_icon()
-    {
-        if (!window)
-            return;
-		if (SDL_Surface* icon = SDL_CreateSurfaceFrom(
-				detail::default_icon_size,
-				detail::default_icon_size,
-				SDL_PIXELFORMAT_RGBA32,
-				const_cast<unsigned char*>(detail::default_icon_rgba),
-				detail::default_icon_size * 4
-			))
-        {
-            SDL_SetWindowIcon(window, icon);
-            SDL_DestroySurface(icon);
-        }
     }
 
     void set_window_title(const char *title)
