@@ -246,8 +246,8 @@ namespace sl
     {
         void refresh_mouse_cursor()
         {
-            // a custom bitmap is drawn by the library, so the OS cursor is hidden while it is in use
-            const bool softwareCursor = mouseVisible && mouse_bitmap() != nullptr;
+			// a custom bitmap is drawn by the library, so the OS cursor is hidden while it is in use
+			const bool softwareCursor = mouseVisible && mouse_bitmap() != nullptr;
 			if (mouseVisible && !softwareCursor)
 			{
 				SDL_ShowCursor();
@@ -255,7 +255,7 @@ namespace sl
 			else
 			{
 				SDL_HideCursor();
-            }
+			}
         }
     } // namespace detail
 
