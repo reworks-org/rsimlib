@@ -82,13 +82,11 @@ namespace sl
                 requested = GraphicsBackend::d3d12;
             else
             {
-                std::fprintf(stderr, "Unknown graphics backend argument: %s\n", argument.data());
                 return false;
             }
         }
         if (!set_graphics_backend(requested))
         {
-            std::fprintf(stderr, "%s\n", sl::last_error().c_str());
             return false;
         }
         return true;
