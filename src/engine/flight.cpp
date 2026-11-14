@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 namespace sl
 {
@@ -56,15 +57,21 @@ namespace sl
 
         double solve_elliptic(double mean, double e)
         {
-            double big_e = e < 0.8 ? mean : pi;
+            double lo = -pi, hi = pi;
+            double big_e = e < 0.8 ? mean : (mean < 0.0 ? -pi : pi);
             for (int i = 0; i < 60; ++i)
             {
                 const double f = big_e - e * std::sin(big_e) - mean;
-                const double d = 1.0 - e * std::cos(big_e);
-                const double step = f / d;
-                big_e -= step;
-                if (std::fabs(step) < 1e-14)
+                if (std::fabs(f) < 1e-15)
                     break;
+                if (f > 0.0)
+                    hi = big_e;
+                else
+                    lo = big_e;
+                double next = big_e - f / (1.0 - e * std::cos(big_e));
+                if (!(next > lo && next < hi))
+                    next = (lo + hi) / 2.0;
+                big_e = next;
             }
             return big_e;
         }
@@ -547,6 +554,94 @@ namespace sl
 
     // ---- Environment queries ----
 
+    namespace
+    {
+        struct GravityDual
+        {
+            double value;
+            dvec3 gradient;
+        };
+
+        GravityDual operator+(const GravityDual &a, const GravityDual &b) { return {a.value + b.value, a.gradient + b.gradient}; }
+        GravityDual operator-(const GravityDual &a, const GravityDual &b) { return {a.value - b.value, a.gradient - b.gradient}; }
+        GravityDual operator*(const GravityDual &a, const GravityDual &b) { return {a.value * b.value, a.gradient * b.value + b.gradient * a.value}; }
+        GravityDual operator*(double a, const GravityDual &b) { return {a * b.value, a * b.gradient}; }
+
+        GravityDual harmonic_potential(const GravityHarmonics &model, const dvec3 &position)
+        {
+            if (model.degree < 2 || model.degree > 70 || !std::isfinite(model.reference_radius) ||
+                !(model.reference_radius > 0.0) || !std::isfinite(model.gm) || !(model.gm > 0.0) ||
+                model.cosine.size() != static_cast<std::size_t>((model.degree + 1) * (model.degree + 2) / 2) ||
+                model.sine.size() != model.cosine.size() || model.cosine[0] != 0.0 || model.sine[0] != 0.0)
+                throw std::invalid_argument("invalid spherical harmonic gravity model");
+            const double r = glm::length(position);
+            const GravityDual inv{1.0 / r, -position / (r * r * r)};
+            const GravityDual x{position.x, {1.0, 0.0, 0.0}};
+            const GravityDual y{position.y, {0.0, 1.0, 0.0}};
+            const GravityDual z{-position.z, {0.0, 0.0, -1.0}};
+            const GravityDual s = x * inv, t = z * inv, u = y * inv;
+            int degree = model.degree;
+            const double radius_ratio = model.reference_radius / r;
+            if (radius_ratio < 1.0)
+            {
+                double power = radius_ratio * radius_ratio;
+                degree = 2;
+                while (degree < model.degree && power > 1e-18)
+                {
+                    power *= radius_ratio;
+                    ++degree;
+                }
+            }
+            const auto idx = [](int n, int m) { return static_cast<std::size_t>(n * (n + 1) / 2 + m); };
+            const std::size_t count = idx(degree + 1, 0);
+            std::vector<GravityDual> a(count), re(degree + 1), im(degree + 1);
+            re[0] = {1.0, dvec3(0.0)};
+            im[0] = {0.0, dvec3(0.0)};
+            a[0] = {std::sqrt(2.0), dvec3(0.0)};
+            for (int m = 0; m <= degree; ++m)
+            {
+                if (m > 0)
+                {
+                    a[idx(m, m)] = std::sqrt(1.0 + 1.0 / (2.0 * m)) * a[idx(m - 1, m - 1)];
+                    re[m] = s * re[m - 1] - t * im[m - 1];
+                    im[m] = s * im[m - 1] + t * re[m - 1];
+                }
+                if (m < degree)
+                    a[idx(m + 1, m)] = std::sqrt(2.0 * m + 3.0) * (u * a[idx(m, m)]);
+                for (int n = m + 2; n <= degree; ++n)
+                {
+                    const double alpha = std::sqrt((2.0 * n + 1.0) * (2.0 * n - 1.0) / ((n - m) * double(n + m)));
+                    const double beta = std::sqrt((2.0 * n + 1.0) * (n - m - 1.0) * (n + m - 1.0) /
+                                                  ((2.0 * n - 3.0) * (n - m) * double(n + m)));
+                    a[idx(n, m)] = alpha * (u * a[idx(n - 1, m)]) - beta * a[idx(n - 2, m)];
+                }
+            }
+            GravityDual sum{0.0, dvec3(0.0)};
+            GravityDual radial{1.0, dvec3(0.0)};
+            const GravityDual ratio = model.reference_radius * inv;
+            for (int n = 0; n <= degree; ++n)
+            {
+                GravityDual terms{0.0, dvec3(0.0)};
+                for (int m = 0; m <= n; ++m)
+                {
+                    const std::size_t i = idx(n, m);
+                    const double norm = m == 0 ? std::sqrt(0.5) : 1.0;
+                    terms = terms + norm * (a[i] * (model.cosine[i] * re[m] + model.sine[i] * im[m]));
+                }
+                sum = sum + radial * terms;
+                radial = radial * ratio;
+            }
+            return model.gm * (inv * sum);
+        }
+
+        dquat gravity_rotation(const FlightBody &body, double time)
+        {
+            if (body.gravity_frame)
+                return body.gravity_frame(time);
+            return body.gravity_orientation * glm::angleAxis(body.spin_rate * time, dvec3(0.0, 1.0, 0.0));
+        }
+    }
+
     std::vector<FlightWorld::Kinematics> FlightWorld::master_kinematics() const
     {
         std::vector<Kinematics> kin(bodies_.size());
@@ -556,7 +651,7 @@ namespace sl
     }
 
     template <class K>
-    dvec3 FlightWorld::gravity_from(const K &kin, const dvec3 &point, int skip) const
+    dvec3 FlightWorld::gravity_from(const K &kin, const dvec3 &point, int skip, double time) const
     {
         dvec3 a = uniform_gravity;
         for (std::size_t j = 0; j < bodies_.size(); ++j)
@@ -569,6 +664,25 @@ namespace sl
             if (r2 < 1e-6)
                 continue;
             a += d * (src.gm / (r2 * std::sqrt(r2)));
+            if (nonspherical_gravity && src.gravity_harmonics)
+            {
+                const dquat rotation = gravity_rotation(src, time);
+                a += rotation * harmonic_potential(*src.gravity_harmonics, glm::inverse(rotation) * -d).gradient;
+            }
+            else if (nonspherical_gravity && src.gravity_j2 != 0.0 && src.gravity_reference_radius > 0.0)
+            {
+                const double axis_length = glm::length(src.spin_axis);
+                if (axis_length > 0.0)
+                {
+                    const dvec3 axis = src.spin_axis / axis_length;
+                    const dvec3 r = -d;
+                    const double z = glm::dot(r, axis);
+                    const double scale = 1.5 * src.gravity_j2 * src.gm *
+                                         src.gravity_reference_radius * src.gravity_reference_radius /
+                                         (r2 * r2 * std::sqrt(r2));
+                    a += scale * ((5.0 * z * z / r2 - 1.0) * r - 2.0 * z * axis);
+                }
+            }
         }
         return a;
     }
@@ -616,7 +730,7 @@ namespace sl
         return best;
     }
 
-    dvec3 FlightWorld::gravity_at(const dvec3 &point) const { return gravity_from(bodies_, point, -1); }
+    dvec3 FlightWorld::gravity_at(const dvec3 &point) const { return gravity_from(bodies_, point, -1, time_); }
 
     double FlightWorld::air_density_at(const dvec3 &point) const
     {
@@ -646,9 +760,23 @@ namespace sl
         {
             if (!bodies_[j].active || bodies_[j].gm <= 0.0 || static_cast<int>(j) == id)
                 continue;
-            const double r = glm::length(bodies_[j].position - b->position);
+            const FlightBody &src = bodies_[j];
+            const dvec3 offset = b->position - src.position;
+            const double r = glm::length(offset);
             if (r > 0.0)
-                energy -= bodies_[j].gm / r;
+            {
+                energy -= src.gm / r;
+                const double axis_length = glm::length(src.spin_axis);
+                if (nonspherical_gravity && src.gravity_harmonics)
+                    energy -= harmonic_potential(*src.gravity_harmonics, glm::inverse(gravity_rotation(src, time_)) * offset).value;
+                else if (nonspherical_gravity && src.gravity_j2 != 0.0 &&
+                    src.gravity_reference_radius > 0.0 && axis_length > 0.0)
+                {
+                    const double sin_lat = glm::dot(offset, src.spin_axis) / (r * axis_length);
+                    const double ratio = src.gravity_reference_radius / r;
+                    energy += src.gm / r * src.gravity_j2 * ratio * ratio * (3.0 * sin_lat * sin_lat - 1.0) * 0.5;
+                }
+            }
         }
         energy -= glm::dot(uniform_gravity, b->position);
         return energy;
@@ -787,7 +915,7 @@ namespace sl
     }
 
     void FlightWorld::body_loads(int index, const std::vector<Kinematics> &kin, dvec3 &force, dvec3 &torque_body,
-                                 bool record)
+                                 bool record, double time)
     {
         FlightBody &b = bodies_[index];
         const Kinematics &k = kin[index];
@@ -795,7 +923,7 @@ namespace sl
         const dmat3 rot_t = glm::transpose(rot);
         const dvec3 &w = k.angular_velocity;
 
-        force = gravity_from(kin, k.position, index) * b.mass();
+        force = gravity_from(kin, k.position, index, time) * b.mass();
         torque_body = dvec3(0.0);
 
         double rho = 0.0;
@@ -942,7 +1070,7 @@ namespace sl
             if (b.mode != FlightBodyMode::dynamic)
                 continue;
             dvec3 force, torque;
-            body_loads(static_cast<int>(i), kin_, force, torque, false);
+            body_loads(static_cast<int>(i), kin_, force, torque, false, t);
             const double mass = b.mass();
             const dvec3 acc = mass > 0.0 ? force / mass : dvec3(0.0);
             const dvec3 inertia = b.inertia();
@@ -1125,7 +1253,7 @@ namespace sl
                 if (kin.empty())
                     kin = master_kinematics();
                 dvec3 f, t;
-                body_loads(static_cast<int>(i), kin, f, t, true);
+                body_loads(static_cast<int>(i), kin, f, t, true, time_);
             }
             b.force_accumulator = dvec3(0.0);
             b.torque_accumulator = dvec3(0.0);

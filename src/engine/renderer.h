@@ -84,6 +84,7 @@ namespace sl::detail
         float anisotropy = 1.0f;
         /** Allocate a full mip chain; upload_texture() of the whole texture then fills every level. */
         bool mipmaps = false;
+        bool repeat = false;
     };
 
     /** Block-compressed texture formats (BC1 = DXT1, BC3 = DXT5). All store colour as unsigned normalised data. */
@@ -104,6 +105,7 @@ namespace sl::detail
         int mip_levels = 1;
         TextureFilter filter = TextureFilter::linear;
         float anisotropy = 1.0f;
+        bool repeat = false;
     };
 
     /** Bytes in one level of a block-compressed image: 4x4 blocks of 8 (BC1) or 16 bytes. */
@@ -244,6 +246,10 @@ namespace sl::detail
         float terrain_average[terrain_layer_count][4] = {};
         /** x: macro texture array layer (negative for none), y: macro tile metres, z: macro strength. */
         float terrain_macro[4] = {-1.0f, 1.0f, 0.0f, 0.0f};
+        std::uint32_t microdetail_array = 0;
+        float microdetail_ranges[3][4] = {};
+        bool microdetail_normals = false;
+        int microdetail_blend_mode = 1;
     };
 
     /** One instance of an instanced mesh draw: a column-major model matrix and an rgba tint multiplying the vertex colours. */
@@ -480,6 +486,7 @@ namespace sl::detail
         virtual bool update_mesh_vertices(std::uint32_t, const Vertex3D *, std::size_t) { return false; }
         /** Draw a mesh into the active render target, depth tested. */
         virtual bool draw_mesh(std::uint32_t, const MeshDrawParams &) { return false; }
+        virtual bool supports_planet_microdetail() const { return false; }
         /** Draw the procedural sky behind everything already in the active 3D target; false if unsupported. */
         /**
          * Per-instance data for draw_mesh_instanced(). Buffers have a fixed capacity and may be updated at most once per

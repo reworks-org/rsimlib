@@ -221,7 +221,7 @@ namespace sl::detail
         bool create_descriptor_pool(VulkanDescriptorPool &result, std::string &error);
         void destroy_descriptor_pool(VulkanDescriptorPool &pool);
         bool create_sampler(TextureFilter filter, VulkanSampler &result, std::string &error,
-                            float anisotropy = 1.0f, bool mipmaps = false);
+                            float anisotropy = 1.0f, bool mipmaps = false, bool repeat = false);
         void destroy_sampler(VulkanSampler &sampler);
         bool allocate_texture_descriptor(const VulkanDescriptorPool &pool,
                                          const VulkanDescriptorSetLayout &layout,
@@ -292,7 +292,8 @@ namespace sl::detail
                                       bool instanced = false,
                                       int blend_variant = 0,
                                       bool depth_write = true,
-                                      bool wireframe = false);
+                                      bool wireframe = false,
+                                      const VulkanDescriptorSetLayout *microdetail_layout = nullptr);
         void destroy_graphics_pipeline(VulkanGraphicsPipeline &pipeline);
         bool create_compute_pipeline(const VulkanShaderModule &compute,
                                      const VulkanStorageDescriptorLayout &descriptor_layout,

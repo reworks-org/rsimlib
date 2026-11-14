@@ -7,6 +7,7 @@
 
 #include <string>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace sl
@@ -26,6 +27,21 @@ namespace sl
     using dvec3 = glm::dvec3;
     using dquat = glm::dquat;
     using dmat3 = glm::dmat3;
+
+    /**
+     * Fully normalized body-fixed coefficients indexed by n*(n+1)/2+m, degree 2..70.
+     * +X is longitude zero, +Y the pole and -Z east. Set degree-zero coefficients
+     * to zero: the body's gm supplies the point-mass field. Radius is in metres,
+     * gm in m^3/s^2; both arrays have (degree+1)*(degree+2)/2 entries.
+     */
+    struct GravityHarmonics
+    {
+        int degree = 0;
+        double reference_radius = 0.0;
+        double gm = 0.0;
+        std::vector<double> cosine;
+        std::vector<double> sine;
+    };
 
     /** Numerical integrator used to advance the world. */
     enum class FlightIntegrator
@@ -222,6 +238,14 @@ namespace sl
         double gm = 0.0;
         /** Surface radius in metres. Above zero makes the body a ground surface and the atmosphere's base. */
         double radius = 0.0;
+        /** Dimensionless J2 gravity coefficient and its reference radius in metres; zero disables the correction. */
+        double gravity_j2 = 0.0;
+        double gravity_reference_radius = 0.0;
+        /** Optional harmonic field overrides J2. Orientation maps body-fixed +X and +Y pole to world at time zero. */
+        std::shared_ptr<const GravityHarmonics> gravity_harmonics;
+        dquat gravity_orientation{1.0, 0.0, 0.0, 0.0};
+        /** Optional body-fixed-to-world orientation at FlightWorld time in seconds, including precession or libration. */
+        std::function<dquat(double)> gravity_frame;
         /** Spin about +Y in rad/s. Drives the surface velocity used by the atmosphere and gear. */
         double spin_rate = 0.0;
         /** Unit axis the body spins about (the pole, in world axes). */
@@ -312,6 +336,8 @@ namespace sl
         int max_substeps_per_step = 2000;
         /** Uniform gravitational acceleration in m/s^2, applied to dynamic bodies in addition to gm sources. */
         dvec3 uniform_gravity{0.0};
+        /** Include J2 corrections from configured gravity sources during dynamic integration. Rails remain Keplerian. */
+        bool nonspherical_gravity = false;
         /** Flat ground at the given height with an up normal of +Y. Gear collides with it. */
         bool flat_ground = false;
         double flat_ground_height = 0.0;
@@ -395,10 +421,10 @@ namespace sl
         void update_rails(double t);
         void substep(double h);
         void deplete_propellant(double h);
-        template <class K> dvec3 gravity_from(const K &kin, const dvec3 &point, int skip) const;
+        template <class K> dvec3 gravity_from(const K &kin, const dvec3 &point, int skip, double time) const;
         template <class K> void air_from(const K &kin, const dvec3 &point, double &density, dvec3 &velocity) const;
         template <class K> double altitude_from(const K &kin, const dvec3 &point) const;
-        void body_loads(int index, const std::vector<Kinematics> &kin, dvec3 &force, dvec3 &torque_body, bool record);
+        void body_loads(int index, const std::vector<Kinematics> &kin, dvec3 &force, dvec3 &torque_body, bool record, double time);
         std::vector<Kinematics> master_kinematics() const;
         void apply_rcs(FlightBody &body);
 

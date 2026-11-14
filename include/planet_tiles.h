@@ -6,11 +6,44 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
+#include <functional>
 #include <memory>
 #include <string>
 
 namespace sl
 {
+    namespace detail { class Renderer; }
+
+    /**
+     * Three repeating, mipmapped texture layers for planet microdetail. Creation resamples RAM-backed bitmaps to a
+     * common square size; the source bitmaps may be freed afterwards. Create and destroy on the rendering thread
+     * while the same renderer is active.
+     */
+    class PlanetMicrotextureArray
+    {
+    public:
+        static std::unique_ptr<PlanetMicrotextureArray> create(const std::array<Bitmap *, 3> &maps, int max_size = 2048);
+        /**
+         * Decode DDS files on the CPU and create the array. Identical paths are decoded only once. Each source is
+         * limited to 16 MiB of decoded pixels; source widths refer to the original DDS images.
+         */
+        static std::unique_ptr<PlanetMicrotextureArray> load_dds(const std::array<std::string, 3> &paths, int max_size = 2048);
+        ~PlanetMicrotextureArray();
+        PlanetMicrotextureArray(const PlanetMicrotextureArray &) = delete;
+        PlanetMicrotextureArray &operator=(const PlanetMicrotextureArray &) = delete;
+
+        /** Backend texture array handle, valid only with the renderer that created this object. */
+        std::uint32_t handle() const { return handle_; }
+        /** Width of an input map before resampling, used to calculate its physical repeat scale. */
+        int source_width(int layer) const { return layer >= 0 && layer < 3 ? widths_[layer] : 0; }
+
+    private:
+        PlanetMicrotextureArray() = default;
+        detail::Renderer *owner_ = nullptr;
+        std::uint32_t handle_ = 0;
+        std::array<int, 3> widths_{};
+    };
 
     /** Settings for PlanetTiles::create(). */
     struct PlanetTilesOptions
@@ -21,6 +54,21 @@ namespace sl
          * every level doubles both directions, column 0 starts at longitude -180 and row 0 is the north.
          */
         std::string colour;
+        /**
+         * Alternative colour tile provider for archives. The level layout is the same as a Celestia pyramid.
+         * Both callbacks must be thread-safe; load_colour runs on a worker and returns a RAM-only bitmap owned by
+         * PlanetTiles, or nullptr with last_error() set. The minimum level must cover the entire sphere.
+         */
+        std::function<bool(int level, int column, int row)> has_colour;
+        /**
+         * Optional sparse-archive traversal: true when a tile has child nodes, including when it has no colour data.
+         * Called on the main thread. The renderer retains the nearest resident ancestor while traversing empty nodes.
+         */
+        std::function<bool(int level, int column, int row)> has_colour_children;
+        std::function<Bitmap *(int level, int column, int row)> load_colour;
+        int colour_min_level = 0;
+        int colour_max_level = 0;
+        int colour_base_split = 0;
         /**
          * Optional gloss map in the same layout (white is shiny, as in Celestia's SpecularTexture), drawn as a
          * sun-glint overlay. May stop at a shallower level than the colour map.
@@ -33,12 +81,64 @@ namespace sl
         std::string normal;
         /** Quads along each side of a tile's patch of sphere. */
         int segments = 12;
+        /**
+         * Optional radial elevation in units of the planet radius, sampled in the tile's body-fixed unit-sphere frame.
+         * The callback runs on worker threads when a patch mesh is built; it must be thread-safe and return finite values
+         * within +-max_elevation. The coarsest meshes are built before create() returns.
+         * Elevation at a position must not depend on tile level, so adjacent patches agree at shared vertices.
+         * Not supported with limb_fade.
+         */
+        std::function<double(const glm::dvec3 &direction)> elevation;
+        /**
+         * Optional LOD-aware elevation for patch positions. The second argument is the approximate mesh-cell width
+         * in units of planet radius. Unless adaptive_elevation_normals is enabled, normals use elevation at fixed
+         * sampling detail so shared vertices have consistent lighting. Requires a positive normal_sample_spacing and
+         * match_elevation_edges to reconcile heights across different mesh levels.
+         */
+        std::function<double(const glm::dvec3 &direction, double cell_size)> elevation_lod;
+        /** Choose each elevated cell's diagonal from neighbouring heights, as in Orbiter's surface mesh. */
+        bool adaptive_elevation_diagonals = false;
+        /** Derive relief normals from the neighbouring mesh-level elevations, as in Orbiter. Requires adaptive diagonals. */
+        bool adaptive_elevation_normals = false;
+        /** Match elevated patch boundaries to the drawn coarser neighbours; requires fading and feathering disabled. */
+        bool match_elevation_edges = false;
+        /** Maximum absolute elevation in units of the planet radius; used for conservative visibility bounds. */
+        double max_elevation = 0.0;
+        /**
+         * Tangent-space offset on the unit sphere for relief normals (approximately radians for small values). A fixed
+         * positive offset makes normals agree at vertices shared by different levels; zero uses the mesh grid spacing.
+         */
+        double normal_sample_spacing = 0.0;
         /** Refine until one texel covers at most this many screen pixels (1 is full detail, 2 halves the resolution). */
         float texel_pixels = 1.0f;
+        /**
+         * When positive, also refine elevated geometry until a mesh cell covers at most this many screen pixels,
+         * independently of texture availability. Missing imagery uses the nearest resident ancestor. When a skirt is
+         * enabled, geometry may also refine while a requested texture is loading or deferred by a resource limit;
+         * without skirts, the parent stays visible until requested child imagery is ready. Skirt-free mixed-LOD
+         * transitions may still expose rasterization gaps. Zero disables geometry-based refinement.
+         */
+        float geometry_pixels = 0.0f;
+        /** Deepest geometry level, or -1 to use the deepest colour level. The max_level cap also applies. */
+        int geometry_max_level = -1;
         /** Deepest level to use; -1 for the deepest one present. */
         int max_level = -1;
-        /** Most tile textures kept in memory (the coarsest level is never evicted). */
+        /** Eviction target for tile textures; active tiles and the coarsest level are retained. */
         int max_cached_tiles = 512;
+        /** Hard limit on resident textures plus outstanding texture loads, across all layers; zero is unlimited.
+         *  This limits the number of textures, not their dimensions or memory in bytes. */
+        int max_resident_tiles = 0;
+        /** Maximum remembered failures plus outstanding loads; zero leaves failures unlimited.
+         *  New loads wait when failures in view fill the limit; old failures can be retried after leaving view. */
+        int max_failed_tiles = 0;
+        /** Maximum cached patch meshes before unused entries are evicted. Active ancestors and coarsest meshes are retained. */
+        int max_cached_meshes = 1200;
+        /** Hard limit on relief mesh entries, including queued jobs; zero leaves the cache without a hard cap. */
+        int max_relief_meshes = 0;
+        /** Limit the number of visible relief patches selected; zero is unlimited. */
+        int max_relief_patches = 0;
+        /** Maximum outstanding relief mesh jobs, including those awaiting upload; zero is unlimited. */
+        int max_relief_mesh_jobs = 0;
         /** Most tile loads running at once; more are queued by the next update(). */
         int max_loads_in_flight = 6;
         /** Pixel width of a tile when the descriptor does not say (it is read from the first tile). 0 to detect. */
@@ -49,7 +149,8 @@ namespace sl
         float specular_strength = 1.0f;
         /** Roughness of the shiniest places, so a white texel is not a mirror. 0.04-1. */
         float specular_min_roughness = 0.15f;
-        /** How far, in tile widths, the skirt around each patch dips to hide cracks between levels of detail. */
+        /** How far, in tile widths, the skirt around each patch dips to hide cracks between levels of detail.
+         *  Must be finite and non-negative; zero disables skirts. */
         float skirt = 0.05f;
         /**
          * Where a regional high-resolution patch ends, the sharp tile fades out over this fraction of its width onto the
@@ -71,10 +172,32 @@ namespace sl
     struct PlanetTilesStats
     {
         int patches = 0;
+        /** Deepest colour tile currently drawn. */
         int deepest_level = 0;
+        /** Deepest visible geometry patch, which may exceed the colour level. */
+        int deepest_geometry_level = 0;
+        /** Visible patches sampling an ancestor colour tile and the largest number of levels skipped. */
+        int patches_using_parent = 0;
+        int max_colour_levels_up = 0;
+        /** Visible patches whose conservative texel-size estimate exceeds the configured screen-space target. */
+        int undersampled_patches = 0;
         int tiles_loaded = 0;
         int tiles_loading = 0;
+        /** Failed texture requests currently remembered to avoid retrying them every frame. */
+        int tiles_failed = 0;
+        /** Whether a texture request was deferred by the resident/load limit in the last update. */
+        bool texture_limited = false;
+        /** Whether a texture request was deferred because the failure bookkeeping limit was full. */
+        bool failure_limited = false;
         int meshes = 0;
+        /** Outstanding relief mesh jobs, including those awaiting upload. */
+        int mesh_jobs = 0;
+        /** Number of visible fine edges matched to a coarser neighbour in the latest update. */
+        int matched_edges = 0;
+        /** True if a configured relief resource limit prevented further refinement. */
+        bool relief_limited = false;
+        /** Current visible relief patch limit; zero means unlimited. */
+        int max_relief_patches = 0;
     };
 
     /**
@@ -84,8 +207,9 @@ namespace sl
      * Each frame call update() with the camera, then draw(). The sphere is split into patches by a quadtree: a tile is
      * refined into its four children while its texels are bigger than the screen pixels, and its children are only
      * refined once the tile itself is resident. Tiles load on worker threads (see load_bitmap_async()); until a tile
-     * arrives its patch draws the part of the next shallower tile that covers it. The pyramid may be sparse: where a
-     * level has no tile (for example a regional high-resolution patch), the patch keeps using the coarser tile.
+     * arrives its patch draws the part of the next shallower tile that covers it. Elevated parents are retained until
+     * their visible children are ready; invisible children are requested when they enter view. The pyramid may be sparse:
+     * where a level has no tile (for example a regional high-resolution patch), the patch keeps using the coarser tile.
      *
      * The unit sphere has its poles on +-Y and longitude -180 at +X. East (+Z at longitude 0, which faces -X) is to the
      * right when seen from outside, which is the reverse of create_sphere_mesh()'s texture direction, so a mesh that
@@ -94,6 +218,13 @@ namespace sl
     class PlanetTiles
     {
     public:
+        /**
+         * Configure microdetail for a geometry tile and its colour owner. `levels_up` identifies the owner relative to
+         * the geometry tile, including the parent underlay during a fade. Called on the rendering thread before any
+         * patches are drawn. Return false and supply an error if the mapping cannot be calculated.
+         */
+        using MicrodetailMapper = std::function<bool(int level, int column, int row, int levels_up,
+                                                     PlanetMicrodetail &detail, std::string &error)>;
         /** Open the tile sets and load the coarsest level. Returns nullptr on failure (see last_error()). */
         static std::unique_ptr<PlanetTiles> create(const PlanetTilesOptions &options);
         ~PlanetTiles();
@@ -109,10 +240,40 @@ namespace sl
         void update(const glm::dvec3 &eye, double fov_y, int viewport_height, const glm::mat4 *view_projection = nullptr);
 
         /**
+         * Like update(), with a double-precision view-projection matrix. This avoids losing frustum precision when
+         * a planet-sized model is close to the camera. The matrix maps unit-sphere coordinates to clip space.
+         */
+        void update_relative(const glm::dvec3 &eye, double fov_y, int viewport_height, const glm::dmat4 *view_projection = nullptr);
+
+        /**
          * Draw the patches chosen by update() with the given model matrix (which should scale the unit sphere to the
          * planet radius). `material` supplies the lighting, fog and tint; its texture and normal map are replaced.
          */
         void draw(const glm::mat4 &model, const Material &material = {});
+
+        /**
+         * Draw with a double-precision model matrix. Relief patch vertices are relative to their patch centre, and the
+         * centre is transformed before conversion to float, preserving precision when the model includes a floating origin.
+         */
+        void draw_relative(const glm::dmat4 &model, const Material &material = {});
+
+        /**
+         * Experimental per-patch microdetail draw. The mapper receives a copy of material.microdetail for each colour
+         * pass; the array must remain alive through all draws. Mapping is completed before drawing starts, so a mapping
+         * failure leaves the target unchanged. Returns false with last_error() set if mapping or a draw fails; a draw
+         * failure can leave earlier patches drawn. The mapper is not used for the specular overlay.
+         * Backend restrictions on Material::microdetail still apply.
+         */
+        bool draw_relative_microdetail(const glm::dmat4 &model, const Material &material,
+                                       const MicrodetailMapper &mapper);
+
+        /**
+         * Sample the currently selected elevated mesh along a body-fixed radial direction. Returns the height in
+         * planet-radius units, or false with last_error() set if that direction is not covered by a ready mesh or any
+         * selected mesh edge update failed during the last update.
+         * Requires match_elevation_edges and disabled tile fading/feathering. Call after update_relative().
+         */
+        bool drawn_elevation(const glm::dvec3 &direction, double &height) const;
 
         /** Deepest level the colour map has. */
         int deepest_level() const;
@@ -122,6 +283,11 @@ namespace sl
         bool has_specular() const;
         /** Changes the brightness of the specular overlay, 0-1, from the next draw (so it can fade with altitude). */
         void set_specular_strength(float strength);
+        /**
+         * Change the visible relief patch limit for the next update; zero is unlimited.
+         * Returns false with last_error() set if negative or too small for the coarsest relief tiles.
+         */
+        bool set_max_relief_patches(int limit);
         PlanetTilesStats stats() const;
 
         /**
@@ -134,6 +300,7 @@ namespace sl
 
     private:
         PlanetTiles();
+        bool draw_relative_impl(const glm::dmat4 &model, const Material &material, const MicrodetailMapper *mapper);
         struct Impl;
         std::unique_ptr<Impl> impl_;
     };

@@ -385,10 +385,11 @@ struct Bitmap {
     bool smooth = false;
     float anisotropy = 1.0f;
     bool mipmaps = false;
+    bool repeat = false;
 };
 ```
 
-`smooth` selects bilinear filtering, `anisotropy` requests anisotropic filtering (`1.0f` disables it), and `mipmaps` builds a full mip chain when the pixels are uploaded, for cleaner minified sampling (distant 3D surfaces, scaled-down sprites). Mipmaps are off by default so pixel art stays crisp; models loaded by `load_model()` enable them, with 16x anisotropy, on their textures. Anisotropy is clamped to the active renderer's supported maximum. All three settings are read when the GPU texture is first created, so set them before the first draw or `upload_bitmap()`. Mip levels are regenerated on each upload of the whole bitmap; offscreen render targets are not mipmapped.
+`smooth` selects bilinear filtering, `anisotropy` requests anisotropic filtering (`1.0f` disables it), and `mipmaps` builds a full mip chain when the pixels are uploaded, for cleaner minified sampling (distant 3D surfaces, scaled-down sprites). `repeat` makes UVs wrap in both axes rather than clamp to the image edges. Mipmaps are off by default so pixel art stays crisp; repeat is also off by default. Models loaded by `load_model()` enable mipmaps, with 16x anisotropy, on their textures. Anisotropy is clamped to the active renderer's supported maximum. These settings are read when the GPU texture is first created, so set them before the first draw or `upload_bitmap()`. Mip levels are regenerated on each upload of the whole bitmap; offscreen render targets are not mipmapped.
 
 Global screen pointer: `extern Bitmap *screen;`
 
@@ -443,12 +444,19 @@ void destroy_bitmap(Bitmap *bitmap);
 
 #### `load_dds(path, options)` ([include/dds.h](../include/dds.h))
 ```cpp
-struct DdsOptions { int max_size = 0; bool smooth = true; float anisotropy = 1.0f; bool allow_compressed_upload = true; };
+struct DdsOptions {
+    int max_size = 0;
+    bool smooth = true;
+    float anisotropy = 1.0f;
+    bool allow_compressed_upload = true;
+    std::size_t max_decoded_bytes = 0;
+    bool repeat = false;
+};
 Bitmap *load_dds(const std::string &path, const DdsOptions &options = {});
 ```
-- **Description**: Loads a `.dds` file: BC1/DXT1, BC3/DXT5 or BC7 (DX10 header), or uncompressed 32-bit RGBA/BGRA. Block-compressed data is uploaded to the GPU as-is with every mip level in the file, so memory is a fraction of RGBA8 (BC1 is 1/8, BC3/BC7 1/4) and there is no CPU decode or mip generation. If the file is larger than `max_size` (0 = the renderer's limit) its biggest mip levels are skipped. Supported on OpenGL (S3TC/BPTC extensions), Vulkan and D3D12.
-- **Compressed bitmaps**: the result has `Bitmap::compressed` set and no CPU pixels: drawing and `bind_texture()` work, but `getpixel`, `putpixel` and `download_bitmap()` fail. `smooth`, `anisotropy` and trilinear mips are fixed at load.
-- **Fallback**: when the backend lacks the format, `allow_compressed_upload` is false, or the file has no smaller mip to fit `max_size`, BC1/BC3/uncompressed files are decoded (top level only) into an ordinary RGBA bitmap. BC7 has no CPU fallback. Returns `nullptr` on failure.
+- **Description**: Loads a `.dds` file: BC1/DXT1, BC2/DXT3, BC3/DXT5 or BC7 (DX10 header), or uncompressed 32-bit RGBA/BGRA. Supported block-compressed data other than BC2 is uploaded to the GPU as-is with every mip level in the file, so memory is a fraction of RGBA8 (BC1 is 1/8, BC3/BC7 1/4) and there is no CPU decode or mip generation. If the file is larger than `max_size` (0 = the renderer's limit) its biggest mip levels are skipped. Compressed uploads are supported on OpenGL (S3TC/BPTC extensions), Vulkan and D3D12.
+- **Compressed bitmaps**: the result has `Bitmap::compressed` set and no CPU pixels: drawing and `bind_texture()` work, but `getpixel`, `putpixel` and `download_bitmap()` fail. `smooth`, `anisotropy`, `repeat` and trilinear mips are fixed at load.
+- **Fallback**: BC2 is decoded on the CPU. When the backend lacks the format, `allow_compressed_upload` is false, or the file has no smaller mip to fit `max_size`, BC1/BC3/uncompressed files are also decoded (top level only) into an ordinary RGBA bitmap. `max_decoded_bytes` bounds the decoded RGBA allocation; zero means unlimited. BC7 has no CPU fallback. Returns `nullptr` on failure.
 
 #### `upload_bitmap(bitmap)` / `download_bitmap(bitmap)`
 ```cpp
@@ -910,13 +918,17 @@ Save a model with `sl::set_mesh_cpu_data_retained(true)` before loading and then
 
 Also `find_model_clip`, `model_clip_duration`, `stop_model_clip`, `model_clip_playing`. Blender key times start at 1/24 s. Convert old AC3D assets to glTF once.
 
-**Skinned models.** glTF skins (`JOINTS_0`/`WEIGHTS_0`, one set of four influences per vertex) are skinned on the CPU: each time the pose changes (`update_model_clip`, `sample_model_clip`, `reset_model_pose`) the model re-skins every skinned part and uploads the vertices with `sl::update_mesh_vertices(mesh, vertices)`, which you can also use for your own CPU-animated meshes (same vertex count, at most once per frame). Skinned parts have an identity `transform`, their mesh is not shared, and their `bounds_*` come from the load-time pose. Data is in `Model::skins` and `Model::skin_bindings` (`ModelSkinBinding::skinned` is the latest result). Skinned models keep a CPU copy of their bind-pose vertices. GPU skinning and morph targets are not implemented.
+**Skinned models.** glTF skins (`JOINTS_0`/`WEIGHTS_0`, one set of four influences per vertex) are skinned on the CPU: each time the pose changes (`update_model_clip`, `sample_model_clip`, `reset_model_pose`) the model re-skins every skinned part and uploads the vertices with `sl::update_mesh_vertices(mesh, vertices)`, which you can also use for your own CPU-animated meshes (same vertex count, at most once per frame, before drawing the mesh). On Vulkan, updated vertex buffers are retained until earlier queued draws finish. Skinned parts have an identity `transform`, their mesh is not shared, and their `bounds_*` come from the load-time pose. Data is in `Model::skins` and `Model::skin_bindings` (`ModelSkinBinding::skinned` is the latest result). Skinned models keep a CPU copy of their bind-pose vertices. GPU skinning and morph targets are not implemented.
 
 **PBR materials.** glTF materials load as `Material::pbr` with `metallic`, `roughness`, `metallic_roughness` (a texture with occlusion in R, roughness in G and metalness in B), `occlusion_strength` and `emissive` (`KHR_materials_emissive_strength` is honoured). Lit PBR materials use Cook-Torrance GGX shading with the scene's directional light, and `Light3D::ambient` as a simple ambient/occlusion term; there is no image-based lighting. Limits: an occlusion texture is used only when it is the same image as the metallic-roughness texture, and an emissive texture is ignored (as is the emissive factor for that material). Supported on OpenGL, Vulkan and Direct3D 12 (the Direct3D 12 path is untested on Linux). Set `Material::pbr = true` yourself to use it on custom meshes. Non-glTF materials are unchanged.
 
 See `src/examples/ex3d_surface`, `src/examples/exmodel3d` and `src/examples/expbr`. glTF cameras/lights and morph targets are not supported.
 
 **Tiled planet textures (`PlanetTiles`).** Streams a Celestia-style virtual texture (a `.ctx` file or a folder of `levelN/tx_<col>_<row>.<ext>` tiles) onto a unit sphere. Each frame `update()` picks a quadtree of tiles from the camera, loads missing ones on worker threads (LRU cache, `max_cached_tiles`) and `draw()` renders them as sphere patches, so any backend works. Tiles may be PNG/JPG/DDS (DXT1, DXT3, DXT5, BC7). Levels may be sparse: a missing tile falls back to the nearest coarser one, but the coarsest level must be complete.
+
+`PlanetMicrotextureArray::create()` prepares three RAM-backed RGBA bitmaps as a repeating, mipmapped GPU texture array, resampled to a common square power-of-two size capped at 2048 pixels. `load_dds()` decodes three DDS paths, reuses identical paths and limits each decoded image to 16 MiB. The original bitmap widths remain available through `source_width()`. Creation and destruction must take place on the rendering thread while the same renderer is active; the bitmaps themselves can be destroyed after creation.
+
+Experimental `Material::microdetail` can sample such an array on ordinary, non-instanced mesh draws on OpenGL, Direct3D 12 (cross-built, not runtime-tested), and Vulkan devices supporting at least six descriptor sets, using tile-local coordinates in `Vertex3D::extra.xy` and three offset/scale ranges. It modulates colour and fades out from 3 km to 15 km; the normal-map option interprets A/G as normal components and B as luminance. Its soft, medium and hard normal blend modes match Orbiter's equations, with medium as the default. Airless materials use Orbiter's 2.0 Lommel-Seeliger response from the base normal, then add the micro-normal illumination correction separately. The micro-normal sunlight bias follows Orbiter's constant 0.06 bias and remains active as slope detail fades out. Unsupported devices and terrain or instanced draws explicitly fail rather than silently ignoring the setting. `PlanetTiles::draw_relative_microdetail` accepts a caller-provided mapping for each geometry tile and colour owner, including fade underlays. Mapping failures occur before drawing; draw failures may leave earlier patches drawn. Kosmos uses this API in a separate, default-off experimental path.
 
 ```cpp
 sl::PlanetTilesOptions o;
@@ -931,10 +943,12 @@ earth->draw(model, material);
 
 Specular is drawn as an additive PBR pass tinted by `specular_strength`, with the gloss map inverted into roughness (floor `specular_min_roughness`). Limits: normal tiles apply only where a normal tile exists at the colour tile's level; level seams are hidden by skirts rather than stitched; tile size is detected from the first loaded tile. Direct3D 12 is untested. Related: `load_dds()` decodes BC2/DXT3 on the CPU and `AsyncBitmapOptions::invert` / `invert_floor` invert tiles on the worker. See `tests/planet_tiles_test.cpp` and `src/examples/exearth`, which takes the data paths on the command line (`exearth --colour <.ctx> [--specular <.ctx>] [--normal <.ctx>] --lat 51.06 --lon -4 --alt 6`) so no texture data lives in this repository.
 
+When a normal tile set is enabled with elevation edge matching or limb fading, the updated meshes retain their CPU indices so updates can regenerate tangents for the normal maps.
+
 **Async loading.** `load_model_async()` and `load_bitmap_async()` decode on worker threads and upload on the main thread inside `end_frame()`, so large assets don't stall a frame.
 
 ```cpp
-AsyncBitmap load_bitmap_async(const std::string &path, const AsyncBitmapOptions &options = {}); // smooth, mipmaps, anisotropy
+AsyncBitmap load_bitmap_async(const std::string &path, const AsyncBitmapOptions &options = {}); // smooth, mipmaps, anisotropy, repeat
 AsyncModel  load_model_async(const std::string &path);
 void        set_async_upload_budget(std::size_t bytes);   // per-frame upload cap, default 8 MiB
 std::size_t async_loads_pending();

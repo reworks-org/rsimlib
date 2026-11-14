@@ -2457,7 +2457,7 @@ namespace sl::detail
     }
 
     bool VulkanContext::create_sampler(TextureFilter filter, VulkanSampler &result, std::string &error,
-                                       float anisotropy, bool mipmaps)
+                                       float anisotropy, bool mipmaps, bool repeat)
     {
         result = {};
         if (!std::isfinite(anisotropy))
@@ -2472,8 +2472,8 @@ namespace sl::detail
         sampler_info.mipmapMode = filter == TextureFilter::linear
                                       ? VK_SAMPLER_MIPMAP_MODE_LINEAR
                                       : VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.addressModeU = repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.addressModeV = repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         // Anisotropic filtering blurs nearest-filtered (pixel-art) textures on some drivers, so it needs linear filtering.
         sampler_info.anisotropyEnable = sampler_anisotropy_enabled_ && anisotropy > 1.0f && filter == TextureFilter::linear ? VK_TRUE : VK_FALSE;
@@ -3069,7 +3069,8 @@ namespace sl::detail
                                                  bool instanced,
                                                  int blend_variant,
                                                  bool depth_write,
-                                                 bool wireframe)
+                                                 bool wireframe,
+                                                 const VulkanDescriptorSetLayout *microdetail_layout)
     {
         result = {};
         if (mesh_vertices || sky)
@@ -3105,8 +3106,13 @@ namespace sl::detail
             const VkDescriptorSetLayout mesh_layouts[6] = {descriptor_layout.layout, descriptor_layout.layout,
                                                            environment_layout_, descriptor_layout.layout,
                                                            descriptor_layout.layout, descriptor_layout.layout};
+            const VkDescriptorSetLayout detail_mesh_layouts[6] = {descriptor_layout.layout, descriptor_layout.layout,
+                                                                  environment_layout_, descriptor_layout.layout,
+                                                                  descriptor_layout.layout,
+                                                                  microdetail_layout ? microdetail_layout->layout : VK_NULL_HANDLE};
             layout_info.setLayoutCount = mesh_vertices ? 6u : 1u;
-            layout_info.pSetLayouts = mesh_vertices ? mesh_layouts : &descriptor_layout.layout;
+            layout_info.pSetLayouts = mesh_vertices ? (microdetail_layout ? detail_mesh_layouts : mesh_layouts)
+                                                    : &descriptor_layout.layout;
             layout_info.pushConstantRangeCount = mesh_vertices ? 2u : 1u;
             layout_info.pPushConstantRanges = ranges;
             if (vkCreatePipelineLayout(device_, &layout_info, nullptr, &result.layout) != VK_SUCCESS)

@@ -202,8 +202,8 @@ namespace sl::detail
                                                                                        : GL_NEAREST_MIPMAP_NEAREST;
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, description.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, description.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
                 if (description.anisotropy > 1.0f &&
                     SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
                 {
@@ -286,8 +286,8 @@ namespace sl::detail
                                                                                        : GL_NEAREST_MIPMAP_NEAREST;
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, description.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, description.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, description.mip_levels - 1);
                 if (description.anisotropy > 1.0f && SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
@@ -871,6 +871,8 @@ namespace sl::detail
                 return draw_mesh_common(handle, params, &instances->second, count);
             }
 
+            bool supports_planet_microdetail() const override { return true; }
+
             bool draw_mesh_common(std::uint32_t handle, const MeshDrawParams &params,
                                   const GLInstanceBuffer *instances, std::size_t instance_count)
             {
@@ -886,6 +888,13 @@ namespace sl::detail
                                        program, error))
                         return false;
                 }
+                if (params.microdetail_array != 0 &&
+                    (glGetUniformLocation(program, "uMicrodetail") < 0 ||
+                     glGetUniformLocation(program, "uMicrodetailMode") < 0 ||
+                     glGetUniformLocation(program, "uMicrodetailBlendMode") < 0 ||
+                     glGetUniformLocation(program, "uMicrodetailRanges") < 0 ||
+                     !glIsTexture(static_cast<GLuint>(params.microdetail_array))))
+                    return false;
                 flush_2d();
                 GLint previous_program = 0;
                 GLint previous_depth_func = GL_LESS;
@@ -956,6 +965,10 @@ namespace sl::detail
                 glActiveTexture(GL_TEXTURE4);
                 glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(params.local_shadow_texture != 0 ? params.local_shadow_texture : white_texture_));
+                GLint previous_array_texture = 0;
+                glActiveTexture(GL_TEXTURE5);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &previous_array_texture);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(params.microdetail_array));
                 glActiveTexture(GL_TEXTURE0);
                 glUseProgram(program);
                 glUniform1i(glGetUniformLocation(program, "uTexture"), 0);
@@ -984,6 +997,11 @@ namespace sl::detail
                     }
                 }
                 glUniform1i(glGetUniformLocation(program, "uLocalShadowMap"), 4);
+                glUniform1i(glGetUniformLocation(program, "uMicrodetail"), 5);
+                glUniform1i(glGetUniformLocation(program, "uMicrodetailMode"),
+                            params.microdetail_array == 0 ? 0 : params.microdetail_normals ? 2 : 1);
+                glUniform1i(glGetUniformLocation(program, "uMicrodetailBlendMode"), params.microdetail_blend_mode);
+                glUniform4fv(glGetUniformLocation(program, "uMicrodetailRanges"), 3, &params.microdetail_ranges[0][0]);
                 glUniformMatrix4fv(glGetUniformLocation(program, "uMvp"), 1, GL_FALSE, params.mvp);
                 glUniform4fv(glGetUniformLocation(program, "uNormalRows"), 3, &params.normal_rows[0][0]);
                 glUniform4fv(glGetUniformLocation(program, "uLight"), 1, params.light);
@@ -1050,6 +1068,8 @@ namespace sl::detail
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture3));
                 glActiveTexture(GL_TEXTURE4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture4));
+                glActiveTexture(GL_TEXTURE5);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(previous_array_texture));
                 glActiveTexture(static_cast<GLenum>(previous_active_texture));
                 return true;
             }
